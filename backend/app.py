@@ -8,7 +8,8 @@ import time
 # 1. LOAD THE AI MODEL
 @st.cache_resource
 def load_summarizer():
-    return pipeline("text-generation", model="google/flan-t5-small")
+    # Using flan-t5-small for speed on Streamlit's free tier
+    return pipeline("text2text-generation", model="google/flan-t5-small")
 
 summarizer = load_summarizer()
 
@@ -45,42 +46,51 @@ if st.button("Generate Detailed Summary"):
         status_text.info("🔍 Initializing Stealth Browser...")
         
         try:
-            # 4. STEALTH SELENIUM BACKEND (NATIVE SELENIUM MANAGER)
+            # 4. STEALTH SELENIUM BACKEND (NATIVE MANAGER)
             chrome_options = Options()
             chrome_options.add_argument("--headless")
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--window-size=1920,1080")
             
-            # Selenium 4.6+ automatically finds the right driver for you
+            # Use a realistic User-Agent to avoid being blocked as a bot
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            chrome_options.add_argument(f"user-agent={user_agent}")
+
             driver = webdriver.Chrome(options=chrome_options)
             
             status_text.info("🛡️ Bypassing Security & Extracting...")
             driver.get(url)
-            time.sleep(4) 
+            
+            # --- IMPROVED EXTRACTION LOGIC ---
+            # Wait for content to settle
+            time.sleep(8) 
+            
+            # Scroll down to trigger "Lazy Loading" (important for sites like NDTV)
+            driver.execute_script("window.scrollTo(0, 800);")
+            time.sleep(2)
             
             paragraphs = driver.find_elements(By.TAG_NAME, "p")
-            raw_text = " ".join([p.text for p in paragraphs if len(p.text) > 40])
+            raw_text = " ".join([p.text for p in paragraphs if len(p.text) > 45])
             article_title = driver.title if driver.title else "News Update"
             driver.quit()
             
-            if len(raw_text) < 150:
-                st.error("Text not found. The site might be blocking extraction.")
+            if len(raw_text) < 200:
+                st.error("Text not found. The site might be blocking extraction or requires a cookie click.")
             else:
                 status_text.info("🧠 AI Deep Analysis in progress...")
                 
-                # 5. AI LOGIC
-                input_text = f"Write a long, 15-line detailed summary for this news: {raw_text[:1000]}"
+                # 5. AI LOGIC (Professional Summary Generation)
+                input_text = f"summarize this news article in 15 detailed lines: {raw_text[:1200]}"
                 
                 result = summarizer(
                     input_text, 
                     max_new_tokens=512, 
-                    min_new_tokens=220, 
-                    do_sample=False,
-                    repetition_penalty=2.5
+                    min_new_tokens=250, 
+                    do_sample=False
                 )
                 
-                summary = result[0]['generated_text'].split("news:")[-1].strip()
+                summary = result[0]['generated_text']
                 formatted_summary = summary.replace(". ", ".\n\n")
                 
                 # Add to History
