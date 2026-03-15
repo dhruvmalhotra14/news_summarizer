@@ -2,4 +2,6 @@ streamlit
 transformers
 selenium>=4.10.0
 torch
+sentencepiece
+protobuf
 newspaper3k
