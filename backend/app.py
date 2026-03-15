@@ -21,11 +21,13 @@ model, tokenizer = load_model_and_tokenizer()
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# 3. FRONTEND DESIGN
+# 3. FRONTEND DESIGN (Enhanced with st.title parameters)
 st.set_page_config(page_title="Universal Deep AI Summarizer", page_icon="🌍", layout="wide")
 
 with st.sidebar:
-    st.title("📜 Summary History")
+    # Adding a title with an anchor for navigation
+    st.title("📜 Summary History", anchor="history")
+    
     if not st.session_state.history:
         st.write("No summaries yet.")
     else:
@@ -37,4 +39,95 @@ with st.sidebar:
         st.session_state.history = []
         st.rerun()
 
-st.title
+# Using the parameters from the documentation you shared
+st.title(
+    "🌍 Universal Deep AI Summarizer", 
+    help="This tool uses Selenium for extraction and FLAN-T5 for Deep NLP summarization.",
+    anchor="main-title"
+)
+st.write("Extracting unique, high-detail 12-15 line summaries from global news sites.")
+
+url = st.text_input("Paste any news article URL here:", placeholder="https://www.thehindu.com/...")
+
+if st.button("Generate Deep Summary"):
+    if url:
+        start_time = time.time()
+        status_text = st.empty()
+        status_text.info("🔍 Initializing Universal Stealth Browser...")
+        
+        try:
+            # 4. STEALTH SELENIUM BACKEND (Stability Fixes)
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--remote-debugging-port=9222")
+            chrome_options.add_argument("--window-size=1920,1080")
+            
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            chrome_options.add_argument(f"user-agent={user_agent}")
+
+            driver = webdriver.Chrome(options=chrome_options)
+            
+            status_text.info("🛡️ Bypassing Security & Extracting Content...")
+            driver.get(url)
+            
+            time.sleep(8) 
+            driver.execute_script("window.scrollTo(0, 1000);")
+            time.sleep(2)
+            
+            page_source = driver.page_source
+            article = Article(url)
+            article.set_html(page_source)
+            article.parse()
+            
+            raw_text = article.text
+            article_title = article.title if article.title else "News Update"
+            driver.quit()
+            
+            if len(raw_text) < 250:
+                st.error("Extraction failed. Site might be blocking bots.")
+            else:
+                status_text.info("🧠 AI Deep Analysis (Diversity Mode)...")
+                
+                # 5. DEEP AI LOGIC (Strict No-Repeat Settings)
+                input_prompt = f"Provide a detailed, professional 15-line summary of this news, including different facts: {raw_text[:1500]}"
+                inputs = tokenizer(input_prompt, return_tensors="pt", truncation=True, max_length=512)
+                
+                outputs = model.generate(
+                    inputs["input_ids"], 
+                    max_length=512,        
+                    min_length=300,        
+                    do_sample=True,         
+                    top_p=0.9,             
+                    top_k=50,               
+                    length_penalty=2.0,    
+                    num_beams=3,            
+                    repetition_penalty=3.0, # Highly aggressive to prevent repeats
+                    no_repeat_ngram_size=3, # Blocks any 3-word sequence from repeating
+                    early_stopping=True
+                )
+                
+                summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                formatted_summary = summary.replace(". ", ".\n\n")
+                
+                # Add to History
+                history_label = f"{article_title[:40]}..."
+                if history_label not in st.session_state.history:
+                    st.session_state.history.append(history_label)
+
+                status_text.empty()
+                st.success(f"Analysis Complete! ({round(time.time() - start_time, 2)}s)")
+                
+                st.subheader(article_title)
+                st.info(formatted_summary)
+                
+                st.download_button("💾 Download Detailed Summary", data=formatted_summary, file_name="summary.txt")
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+            if 'driver' in locals():
+                driver.quit()
+    else:
+        st.warning("Please paste a URL first!")
