@@ -1,0 +1,5 @@
+streamlit
+transformers
+selenium
+webdriver-manager
+torch
