@@ -1,10 +1,8 @@
 import streamlit as st
 from transformers import pipeline
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 
 # 1. LOAD THE AI MODEL
@@ -47,20 +45,17 @@ if st.button("Generate Detailed Summary"):
         status_text.info("🔍 Initializing Stealth Browser...")
         
         try:
-            # 4. STEALTH SELENIUM BACKEND (VERSION MISMATCH FIX)
+            # 4. STEALTH SELENIUM BACKEND (NATIVE SELENIUM MANAGER)
             chrome_options = Options()
             chrome_options.add_argument("--headless")
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--window-size=1920,1080")
             
-            # This forces the driver to stay up-to-date with the cloud's chromium version
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Selenium 4.6+ automatically finds the right driver for you
+            driver = webdriver.Chrome(options=chrome_options)
             
             status_text.info("🛡️ Bypassing Security & Extracting...")
-            driver.execute_cdp_cmd('Network.setExtraHTTPHeaders', {'headers': {'Referer': 'https://www.google.com/'}})
-            
             driver.get(url)
             time.sleep(4) 
             
