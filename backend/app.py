@@ -47,9 +47,11 @@ if st.button("Generate Detailed Summary"):
         status_text.info("🔍 Initializing Stealth Browser...")
         
         try:
-            # 4. STEALTH SELENIUM BACKEND
+            # 4. STEALTH SELENIUM BACKEND (CLOUD OPTIMIZED)
             chrome_options = Options()
             chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")  # Required for Cloud
+            chrome_options.add_argument("--disable-dev-shm-usage")  # Required for Cloud
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_argument("--blink-settings=imagesEnabled=false")
@@ -82,7 +84,7 @@ if st.button("Generate Detailed Summary"):
                 result = summarizer(
                     input_text, 
                     max_new_tokens=512, 
-                    min_new_tokens=220, # Higher floor for guaranteed length
+                    min_new_tokens=220, 
                     do_sample=False,
                     repetition_penalty=2.5
                 )
@@ -92,7 +94,6 @@ if st.button("Generate Detailed Summary"):
                 # Cleanup & Professional Formatting
                 summary = summary.replace("U.S.\n", "U.S. ").replace("pic.", "")
                 
-                # Sentence Healer: Trims trailing noise or fragments
                 if not summary.endswith((".", "!", "?")):
                     if "." in summary:
                         summary = summary.rsplit(".", 1)[0] + "."
