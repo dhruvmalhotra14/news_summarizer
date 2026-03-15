@@ -47,18 +47,14 @@ if st.button("Generate Detailed Summary"):
         status_text.info("🔍 Initializing Stealth Browser...")
         
         try:
-            # 4. STEALTH SELENIUM BACKEND (CLOUD OPTIMIZED)
+            # 4. STEALTH SELENIUM BACKEND (VERSION MISMATCH FIX)
             chrome_options = Options()
             chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--no-sandbox")  # Required for Cloud
-            chrome_options.add_argument("--disable-dev-shm-usage")  # Required for Cloud
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--window-size=1920,1080")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument("--blink-settings=imagesEnabled=false")
             
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            chrome_options.add_argument(f"user-agent={user_agent}")
-
+            # This forces the driver to stay up-to-date with the cloud's chromium version
             service = Service(ChromeDriverManager().install())
             driver = webdriver.Chrome(service=service, options=chrome_options)
             
@@ -78,7 +74,7 @@ if st.button("Generate Detailed Summary"):
             else:
                 status_text.info("🧠 AI Deep Analysis in progress...")
                 
-                # 5. AI LOGIC (Reliable Long-Form Mode)
+                # 5. AI LOGIC
                 input_text = f"Write a long, 15-line detailed summary for this news: {raw_text[:1000]}"
                 
                 result = summarizer(
@@ -90,36 +86,20 @@ if st.button("Generate Detailed Summary"):
                 )
                 
                 summary = result[0]['generated_text'].split("news:")[-1].strip()
-
-                # Cleanup & Professional Formatting
-                summary = summary.replace("U.S.\n", "U.S. ").replace("pic.", "")
-                
-                if not summary.endswith((".", "!", "?")):
-                    if "." in summary:
-                        summary = summary.rsplit(".", 1)[0] + "."
-
-                # Smart Category Logic
-                category = "General"
-                if any(x in summary.lower() for x in ["strike", "military", "forces", "targets"]): category = "🛡️ Defense"
-                elif any(x in summary.lower() for x in ["oil", "economy", "trade", "global"]): category = "💰 Economy"
-                elif any(x in summary.lower() for x in ["election", "minister", "government"]): category = "🏛️ Politics"
-
                 formatted_summary = summary.replace(". ", ".\n\n")
                 
                 # Add to History
-                history_label = f"[{category}] {article_title[:40]}..."
+                history_label = f"{article_title[:40]}..."
                 if history_label not in st.session_state.history:
                     st.session_state.history.append(history_label)
 
                 status_text.empty()
                 st.success(f"Analysis Complete! ({round(time.time() - start_time, 2)}s)")
                 
-                st.subheader(f"{category} | {article_title}")
-                st.markdown(f"**Stats:** {len(formatted_summary.split())} words | ~{len(formatted_summary.splitlines())} lines")
+                st.subheader(article_title)
                 st.info(formatted_summary)
                 
                 st.download_button("💾 Download Summary", data=formatted_summary, file_name="summary.txt")
-                st.text_area("Copy summary:", value=formatted_summary, height=350)
 
         except Exception as e:
             st.error(f"Error: {e}")
