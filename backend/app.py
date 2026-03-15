@@ -4,7 +4,7 @@ import torch
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from newspaper import Article # Universal extraction logic
+from newspaper import Article
 import time
 
 # 1. LOAD THE AI MODEL
@@ -38,7 +38,7 @@ with st.sidebar:
         st.rerun()
 
 st.title("🌍 Universal AI News Summarizer")
-st.write("Extract and summarize news from NDTV, BBC, CNN, Reuters, and more.")
+st.write("Extract and summarize news from almost any website.")
 
 url = st.text_input("Paste any news article URL here:", placeholder="https://www.bbc.com/news/...")
 
@@ -65,11 +65,11 @@ if st.button("Generate Summary"):
             driver.get(url)
             
             # Universal Wait & Scroll
-            time.sleep(6) 
+            time.sleep(8) 
             driver.execute_script("window.scrollTo(0, 1000);")
             time.sleep(2)
             
-            # Use Newspaper3k to parse the page source from Selenium
+            # Use Newspaper3k logic to find the main article body
             page_source = driver.page_source
             article = Article(url)
             article.set_html(page_source)
@@ -80,11 +80,11 @@ if st.button("Generate Summary"):
             driver.quit()
             
             if len(raw_text) < 250:
-                st.error("Extraction failed. This site might have strong bot protection or the content is behind a login.")
+                st.error("Extraction failed. Site might be blocking bots or the content is behind a paywall.")
             else:
                 status_text.info("🧠 AI Analysis in progress...")
                 
-                # 5. NATIVE AI LOGIC
+                # 5. NATIVE AI LOGIC (No Pipeline - Fixes KeyError)
                 input_prompt = f"summarize this news in 10 clear sentences: {raw_text[:1200]}"
                 inputs = tokenizer(input_prompt, return_tensors="pt", truncation=True, max_length=512)
                 
@@ -102,3 +102,20 @@ if st.button("Generate Summary"):
                 
                 # Add to History
                 history_label = f"{article_title[:40]}..."
+                if history_label not in st.session_state.history:
+                    st.session_state.history.append(history_label)
+
+                status_text.empty()
+                st.success(f"Analysis Complete! ({round(time.time() - start_time, 2)}s)")
+                
+                st.subheader(article_title)
+                st.info(formatted_summary)
+                
+                st.download_button("💾 Download Summary", data=formatted_summary, file_name="summary.txt")
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+            if 'driver' in locals():
+                driver.quit()
+    else:
+        st.warning("Please paste a URL first!")
