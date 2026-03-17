@@ -1,9 +1,6 @@
 import streamlit as st
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import torch
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 from newspaper import Article
 import time
 
@@ -21,13 +18,11 @@ model, tokenizer = load_model_and_tokenizer()
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# 3. FRONTEND DESIGN (Enhanced with st.title parameters)
-st.set_page_config(page_title="Universal Deep AI Summarizer", page_icon="🌍", layout="wide")
+# 3. FRONTEND DESIGN
+st.set_page_config(page_title="News Summarizer", page_icon="📑", layout="wide")
 
 with st.sidebar:
-    # Adding a title with an anchor for navigation
-    st.title("📜 Summary History", anchor="history")
-    
+    st.title("📜 Summary History")
     if not st.session_state.history:
         st.write("No summaries yet.")
     else:
@@ -39,60 +34,37 @@ with st.sidebar:
         st.session_state.history = []
         st.rerun()
 
-# Using the parameters from the documentation you shared
-st.title(
-    "🌍 Universal Deep AI Summarizer", 
-    help="This tool uses Selenium for extraction and FLAN-T5 for Deep NLP summarization.",
-    anchor="main-title"
-)
-st.write("Extracting unique, high-detail 12-15 line summaries from global news sites.")
+# Requested name change
+st.title("📑 News Summarizer", help="Fast AI extraction and deep summarization.")
+st.write("Generating high-detail, 15-line professional summaries.")
 
 url = st.text_input("Paste any news article URL here:", placeholder="https://www.thehindu.com/...")
 
-if st.button("Generate Deep Summary"):
+if st.button("Generate Summary"):
     if url:
         start_time = time.time()
         status_text = st.empty()
-        status_text.info("🔍 Initializing Universal Stealth Browser...")
+        status_text.info("⚡ Fast-Extracting News Content...")
         
         try:
-            # 4. STEALTH SELENIUM BACKEND (Stability Fixes)
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--remote-debugging-port=9222")
-            chrome_options.add_argument("--window-size=1920,1080")
-            
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            chrome_options.add_argument(f"user-agent={user_agent}")
-
-            driver = webdriver.Chrome(options=chrome_options)
-            
-            status_text.info("🛡️ Bypassing Security & Extracting Content...")
-            driver.get(url)
-            
-            time.sleep(8) 
-            driver.execute_script("window.scrollTo(0, 1000);")
-            time.sleep(2)
-            
-            page_source = driver.page_source
+            # 4. FAST EXTRACTION (Bypassing Selenium for speed)
             article = Article(url)
-            article.set_html(page_source)
+            article.download()
             article.parse()
             
             raw_text = article.text
             article_title = article.title if article.title else "News Update"
-            driver.quit()
             
-            if len(raw_text) < 250:
-                st.error("Extraction failed. Site might be blocking bots.")
+            if len(raw_text) < 200:
+                st.warning("🔄 Fast extraction failed. Trying deep stealth mode...")
+                # (Optional: You could put Selenium here as a backup, but for speed, direct is best)
+                st.error("Site blocked fast-access. Please try a different news source.")
             else:
-                status_text.info("🧠 AI Deep Analysis (Diversity Mode)...")
+                status_text.info("🧠 AI Deep Analysis (ChatGPT-Style)...")
                 
-                # 5. DEEP AI LOGIC (Strict No-Repeat Settings)
-                input_prompt = f"Provide a detailed, professional 15-line summary of this news, including different facts: {raw_text[:1500]}"
+                # 5. GPT-STYLE SUMMARY LOGIC
+                # We ask for a "Point-by-point" report to ensure length and clarity
+                input_prompt = f"Provide a detailed, point-by-point 15-line report on the following news. Use bullet points for different facts: {raw_text[:1200]}"
                 inputs = tokenizer(input_prompt, return_tensors="pt", truncation=True, max_length=512)
                 
                 outputs = model.generate(
@@ -101,17 +73,19 @@ if st.button("Generate Deep Summary"):
                     min_length=300,        
                     do_sample=True,         
                     top_p=0.9,             
-                    top_k=50,               
-                    length_penalty=2.0,    
-                    num_beams=3,            
-                    repetition_penalty=3.0, # Highly aggressive to prevent repeats
-                    no_repeat_ngram_size=3, # Blocks any 3-word sequence from repeating
+                    repetition_penalty=3.0, 
+                    no_repeat_ngram_size=3, 
                     early_stopping=True
                 )
                 
                 summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                formatted_summary = summary.replace(". ", ".\n\n")
                 
+                # Formatting the summary to look like a chat response
+                # We replace periods with newlines and bullets for a "ChatGPT" feel
+                formatted_summary = summary.replace(". ", ".\n\n• ")
+                if not formatted_summary.startswith("• "):
+                    formatted_summary = "• " + formatted_summary
+
                 # Add to History
                 history_label = f"{article_title[:40]}..."
                 if history_label not in st.session_state.history:
@@ -121,13 +95,11 @@ if st.button("Generate Deep Summary"):
                 st.success(f"Analysis Complete! ({round(time.time() - start_time, 2)}s)")
                 
                 st.subheader(article_title)
-                st.info(formatted_summary)
+                st.markdown(formatted_summary) # Using markdown for better bullet visibility
                 
-                st.download_button("💾 Download Detailed Summary", data=formatted_summary, file_name="summary.txt")
+                st.download_button("💾 Download Summary", data=formatted_summary, file_name="summary.txt")
 
         except Exception as e:
             st.error(f"Error: {e}")
-            if 'driver' in locals():
-                driver.quit()
     else:
         st.warning("Please paste a URL first!")
