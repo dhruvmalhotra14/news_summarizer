@@ -4,11 +4,10 @@ import torch
 from newspaper import Article
 import time
 
-# 1. HYPER-FAST MODEL LOADING
+# 1. LOAD THE AI MODEL
 @st.cache_resource
 def load_model_and_tokenizer():
     model_name = "google/flan-t5-small"
-    # Using 'low_cpu_mem_usage' to speed up the initial boot
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name, low_cpu_mem_usage=True)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     return model, tokenizer
@@ -19,7 +18,7 @@ model, tokenizer = load_model_and_tokenizer()
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# 3. CLEAN UI DESIGN
+# 3. UI DESIGN
 st.set_page_config(page_title="News Summarizer", page_icon="📑", layout="wide")
 
 with st.sidebar:
@@ -35,11 +34,10 @@ with st.sidebar:
         st.session_state.history = []
         st.rerun()
 
-# Updated Title per your request
-st.title("📑 News Summarizer", help="Optimized for high-speed AI analysis.")
-st.write("Instant, high-detail 15-line reports.")
+st.title("📑 News Summarizer", help="High-precision AI News Analysis.")
+st.write("Generating structured, accurate 15-line reports.")
 
-url = st.text_input("Paste any news article URL here:", placeholder="https://www.thehindu.com/...")
+url = st.text_input("Paste any news article URL here:", placeholder="https://www.ndtv.com/...")
 
 if st.button("Generate Summary"):
     if url:
@@ -48,46 +46,65 @@ if st.button("Generate Summary"):
         status_text.info("⚡ Rapid Extraction Active...")
         
         try:
-            # 4. LIGHTWEIGHT EXTRACTION (Turbo Mode)
-            # We use a custom config to bypass heavy media files
-            article = Article(url, keep_article_html=False, request_timeout=10)
+            # 4. LIGHTWEIGHT EXTRACTION
+            article = Article(url, request_timeout=10)
             article.download()
             article.parse()
             
             raw_text = article.text
             article_title = article.title if article.title else "News Update"
             
-            if len(raw_text) < 150:
-                st.error("Extraction failed. The site may be blocking rapid access.")
+            if len(raw_text) < 200:
+                st.error("Extraction failed. The site may be blocking access.")
             else:
-                status_text.info("🧠 Performing Deep Semantic Analysis...")
+                status_text.info("🧠 Performing Semantic Precision Analysis...")
                 
-                # 5. OPTIMIZED AI LOGIC (Point-by-Point / No Repeats)
-                input_prompt = f"Provide a detailed, 15-line professional point-by-point report on this: {raw_text[:1200]}"
-                
-                # Tokenize on CPU but optimize for inference
+                # 5. PRECISION AI LOGIC
+                # We refine the prompt to focus strictly on facts in the text
+                input_prompt = f"Summarize the following article accurately in exactly 15 detailed bullet points. Focus only on the facts provided: {raw_text[:1300]}"
                 inputs = tokenizer(input_prompt, return_tensors="pt", truncation=True, max_length=512)
                 
-                with torch.no_grad(): # Speeds up inference by not calculating gradients
+                with torch.no_grad():
                     outputs = model.generate(
                         inputs["input_ids"], 
-                        max_length=450,        
-                        min_length=280,        
+                        max_length=512,        
+                        min_length=320,        # Increased slightly for better depth
                         do_sample=True,         
-                        top_p=0.92,             
-                        repetition_penalty=3.5, # Increased to keep it moving fast and unique
-                        no_repeat_ngram_size=3, 
+                        top_p=0.85,             # Reduced slightly to keep it more "grounded" and less random
+                        temperature=0.7,        # Added temperature to balance creativity and accuracy
+                        repetition_penalty=4.0, # Increased to prevent the looping seen in your images
+                        no_repeat_ngram_size=4, # Harder blocking for 4-word sequences
                         early_stopping=True
                     )
                 
                 summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
                 
-                # Format output with clean bullets for the modern look
-                formatted_summary = summary.replace(". ", ".\n\n• ")
-                if not formatted_summary.startswith("• "):
-                    formatted_summary = "• " + formatted_summary
+                # 6. QUALITY FORMATTING FOR UI AND DOWNLOAD
+                # We turn the messy text into a clean bulleted report
+                lines = summary.split(". ")
+                clean_lines = [line.strip() + "." for line in lines if len(line) > 15]
+                
+                # Ensure we have a bulleted structure for the "Gemini/ChatGPT" look
+                report_body = "\n\n• ".join(clean_lines[:15]) # Limit to 15 best points
+                if not report_body.startswith("• "):
+                    report_body = "• " + report_body
 
-                # Add to History
+                # Create the Download Text with a professional header
+                download_content = f"""
+NEWS ANALYSIS REPORT
+--------------------
+TITLE: {article_title.upper()}
+SOURCE: {url}
+DATE: {time.strftime("%Y-%m-%d %H:%M:%S")}
+
+SUMMARY:
+{report_body}
+
+--------------------
+Generated by AI News Summarizer
+                """
+
+                # Update History
                 history_label = f"{article_title[:40]}..."
                 if history_label not in st.session_state.history:
                     st.session_state.history.append(history_label)
@@ -96,9 +113,15 @@ if st.button("Generate Summary"):
                 st.success(f"Analysis Complete! ({round(time.time() - start_time, 2)}s)")
                 
                 st.subheader(article_title)
-                st.markdown(formatted_summary) 
+                st.markdown(report_body) 
                 
-                st.download_button("💾 Download Report", data=formatted_summary, file_name="report.txt")
+                # Improved download button
+                st.download_button(
+                    label="💾 Download Professional Report", 
+                    data=download_content, 
+                    file_name=f"News_Report_{int(time.time())}.txt",
+                    mime="text/plain"
+                )
 
         except Exception as e:
             st.error(f"Error: {e}")
