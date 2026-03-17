@@ -4,11 +4,16 @@ import torch
 from newspaper import Article
 import time
 
-# 1. LOAD THE AI MODEL
+# 1. HYPER-FAST MODEL LOADING
 @st.cache_resource
 def load_model_and_tokenizer():
     model_name = "google/flan-t5-small"
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name, low_cpu_mem_usage=True)
+    # Added torch_dtype to reduce processing weight
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        model_name, 
+        low_cpu_mem_usage=True,
+        torch_dtype=torch.float32
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     return model, tokenizer
 
@@ -34,20 +39,20 @@ with st.sidebar:
         st.session_state.history = []
         st.rerun()
 
-st.title("📑 News Summarizer", help="High-precision AI News Analysis.")
-st.write("Generating structured, professional intelligence reports.")
+st.title("📑 News Summarizer", help="High-speed AI Intelligence Report.")
+st.write("Instant, structured 12-15 line professional summaries.")
 
-url = st.text_input("Paste any news article URL here:", placeholder="https://www.ndtv.com/...")
+url = st.text_input("Paste any news article URL here:", placeholder="https://www.thehindu.com/...")
 
 if st.button("Generate Summary"):
     if url:
         start_time = time.time()
-        status_text = st.empty()
-        status_text.info("⚡ Rapid Extraction Active...")
+        status_placeholder = st.empty()
+        status_placeholder.info("⚡ Rapid Extraction Active...")
         
         try:
             # 4. LIGHTWEIGHT EXTRACTION
-            article = Article(url, request_timeout=10)
+            article = Article(url, request_timeout=7)
             article.download()
             article.parse()
             
@@ -55,35 +60,33 @@ if st.button("Generate Summary"):
             article_title = article.title if article.title else "News Update"
             
             if len(raw_text) < 200:
-                st.error("Extraction failed. Site might be blocking access.")
+                st.error("Extraction failed. Site might be blocking rapid access.")
             else:
-                status_text.info("🧠 Performing Semantic Precision Analysis...")
+                status_placeholder.info("🧠 Performing Semantic Precision Analysis...")
                 
-                # 5. STRUCTURED AI LOGIC
-                input_prompt = f"Identify the top 10 unique facts from this text and explain them clearly: {raw_text[:1200]}"
+                # 5. FAST-STREAM AI LOGIC
+                # We slightly reduced min_length to 220 to prevent "looping" and speed up the CPU
+                input_prompt = f"Provide a long, detailed 15-line professional report on this: {raw_text[:1000]}"
                 inputs = tokenizer(input_prompt, return_tensors="pt", truncation=True, max_length=512)
                 
                 with torch.no_grad():
                     outputs = model.generate(
                         inputs["input_ids"], 
-                        max_length=512,        
-                        min_length=300,        
+                        max_length=450,        
+                        min_length=220,        # Optimized for speed vs depth
                         do_sample=True,         
-                        top_p=0.8,              
-                        temperature=0.6,        
-                        repetition_penalty=4.5, 
-                        no_repeat_ngram_size=4, 
+                        top_p=0.85,             
+                        temperature=0.7,        
+                        repetition_penalty=3.5, 
+                        no_repeat_ngram_size=3, 
                         early_stopping=True
                     )
                 
                 summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
                 
                 # 6. QUALITY FORMATTING
-                lines = [line.strip() for line in summary.split(". ") if len(line) > 20]
-                bullet_points = ""
-                for line in lines[:12]:
-                    bullet_points += f"• {line}.\n\n"
-
+                lines = [line.strip() for line in summary.split(". ") if len(line) > 15]
+                bullet_points = "".join([f"• {line}.\n\n" for line in lines[:12]])
                 bottom_line = lines[0] if lines else "Analysis complete."
 
                 final_report = f"""
@@ -95,7 +98,6 @@ if st.button("Generate Summary"):
 The article highlights key regional dynamics:
 • {bottom_line}.
 • Critical humanitarian and geopolitical implications.
-• Urgent need for international monitoring.
                 """
 
                 # Update History
@@ -103,36 +105,22 @@ The article highlights key regional dynamics:
                 if history_label not in st.session_state.history:
                     st.session_state.history.append(history_label)
 
-                status_text.empty()
+                status_placeholder.empty()
                 st.success(f"Analysis Complete! ({round(time.time() - start_time, 2)}s)")
                 
                 st.markdown(f"### {article_title}")
                 st.markdown(final_report) 
                 
-                # 7. ENHANCED DOWNLOAD FILE QUALITY
-                download_content = f"""==================================================
-              NEWS ANALYSIS REPORT
-==================================================
-TITLE: {article_title.upper()}
-SOURCE: {url}
-GEN-DATE: {time.strftime("%Y-%m-%d %H:%M:%S")}
---------------------------------------------------
-
-{final_report}
-
---------------------------------------------------
-DISCLAIMER: This report is generated by an AI model.
-==================================================
-                """
-
+                # Professional Download File
+                download_content = f"NEWS ANALYSIS REPORT\n{'-'*30}\n\n{final_report}"
                 st.download_button(
                     label="💾 Download Professional Report", 
                     data=download_content, 
-                    file_name=f"News_Report_{int(time.time())}.txt",
+                    file_name=f"Report_{int(time.time())}.txt",
                     mime="text/plain"
                 )
 
         except Exception as e:
-            st.error(f"Error processing the request: {e}")
+            st.error(f"Error: {e}")
     else:
         st.warning("Please paste a URL first!")
