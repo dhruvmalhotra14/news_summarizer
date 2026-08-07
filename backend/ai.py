@@ -4,7 +4,7 @@ from prompt import summary_prompt
 
 # Create Gemini client
 client = genai.Client(
-    api_key=st.secrets[""]
+    api_key=st.secrets["GEMINI_API_KEY"]
 )
 
 def generate_summary(article_text):
