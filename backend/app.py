@@ -1,13 +1,12 @@
-import time
 import streamlit as st
 
 from extractor import extract_article
 from ai import generate_summary
 
 
-# ============================================================
-# Page Configuration
-# ============================================================
+# =====================================================
+# PAGE CONFIG
+# =====================================================
 
 st.set_page_config(
     page_title="News Summarizer",
@@ -16,18 +15,17 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# Session State
-# ============================================================
+# =====================================================
+# SESSION STATE
+# =====================================================
 
 if "history" not in st.session_state:
-
     st.session_state.history = []
 
 
-# ============================================================
-# Sidebar
-# ============================================================
+# =====================================================
+# SIDEBAR
+# =====================================================
 
 with st.sidebar:
 
@@ -37,27 +35,24 @@ with st.sidebar:
 
     st.subheader("Summary History")
 
-    if not st.session_state.history:
+    if st.session_state.history:
 
-        st.info(
-            "No summaries generated yet."
-        )
+        for i, item in enumerate(
+            reversed(st.session_state.history)
+        ):
+
+            st.markdown(
+                f"**{i + 1}. {item['title'][:50]}**"
+            )
 
     else:
 
-        for item in reversed(
-            st.session_state.history
-        ):
-
-            st.write(
-                "•",
-                item
-            )
+        st.info("No summaries generated yet.")
 
     st.markdown("---")
 
     if st.button(
-        "🗑 Clear History",
+        "🗑️ Clear History",
         use_container_width=True
     ):
 
@@ -66,210 +61,143 @@ with st.sidebar:
         st.rerun()
 
 
-# ============================================================
-# Main Page
-# ============================================================
+# =====================================================
+# MAIN HEADER
+# =====================================================
 
 st.title("📰 News Summarizer")
 
-st.caption(
-    "Generate concise summaries from news articles using Gemini AI."
+st.markdown(
+    "Enter a news article URL and generate an AI-powered summary."
 )
 
 
-# ============================================================
-# URL Input
-# ============================================================
+# =====================================================
+# URL INPUT
+# =====================================================
 
-with st.form("summary_form"):
+st.subheader("🔗 Article Input")
 
-    st.subheader("Article Input")
-
-    url = st.text_input(
-        "🔗 Paste News Article URL",
-        placeholder="https://example.com/news/article"
-    )
-
-    generate = st.form_submit_button(
-        "🚀 Generate Summary",
-        use_container_width=True
-    )
+url = st.text_input(
+    "Paste News Article URL",
+    placeholder="https://example.com/news/article",
+    label_visibility="visible"
+)
 
 
-# ============================================================
-# Generate Summary
-# ============================================================
+# =====================================================
+# GENERATE BUTTON
+# =====================================================
 
-if generate:
+generate_button = st.button(
+    "🚀 Generate Summary",
+    use_container_width=True
+)
 
-    # --------------------------------------------------------
-    # Validate URL
-    # --------------------------------------------------------
+
+# =====================================================
+# PROCESS ARTICLE
+# =====================================================
+
+if generate_button:
 
     if not url.strip():
 
         st.warning(
-            "Please enter a news article URL."
+            "⚠️ Please paste a news article URL."
         )
 
         st.stop()
 
+    # -------------------------------------------------
+    # Extract article
+    # -------------------------------------------------
 
-    # --------------------------------------------------------
-    # Extract Article
-    # --------------------------------------------------------
+    with st.spinner(
+        "🔎 Extracting article..."
+    ):
 
-    extraction_start = time.time()
-
-    try:
-
-        with st.spinner(
-            "Extracting article..."
-        ):
-
-            title, article_text = extract_article(
-                url
-            )
-
-    except Exception as e:
-
-        st.error(
-            f"❌ {str(e)}"
-        )
-
-        st.stop()
-
-
-    extraction_time = round(
-        time.time() - extraction_start,
-        2
-    )
-
-
-    # --------------------------------------------------------
-    # Validate extracted article
-    # --------------------------------------------------------
+        article_text = extract_article(url)
 
     if not article_text:
 
         st.error(
-            "❌ No article content could be extracted."
+            "❌ Unable to extract the article from this website."
+        )
+
+        st.info(
+            "The publisher may be blocking automated access "
+            "or the page may not contain accessible article text."
         )
 
         st.stop()
 
+    # -------------------------------------------------
+    # Check article length
+    # -------------------------------------------------
 
-    if len(article_text.strip()) < 100:
+    if len(article_text.strip()) < 300:
 
         st.error(
-            "❌ The extracted article is too short."
+            "❌ The extracted article text is too short "
+            "to generate a reliable summary."
         )
 
         st.stop()
 
+    # -------------------------------------------------
+    # Generate summary
+    # -------------------------------------------------
 
-    # --------------------------------------------------------
-    # Add to History
-    # --------------------------------------------------------
-
-    if title not in st.session_state.history:
-
-        st.session_state.history.append(
-            title
-        )
-
-
-    # --------------------------------------------------------
-    # Article Information
-    # --------------------------------------------------------
-
-    st.subheader(title)
-
-    st.caption(
-        f"Article extracted in "
-        f"{extraction_time} seconds"
-    )
-
-
-    # --------------------------------------------------------
-    # Generate Gemini Summary
-    # --------------------------------------------------------
-
-    summary_start = time.time()
+    st.subheader("✨ AI Summary")
 
     summary_placeholder = st.empty()
 
-    summary = ""
-
+    complete_summary = ""
 
     try:
 
         with st.spinner(
-            "Generating summary..."
+            "🤖 Generating summary..."
         ):
 
             for chunk in generate_summary(
                 article_text
             ):
 
-                summary += chunk
+                complete_summary += chunk
 
-                # Streaming output
                 summary_placeholder.markdown(
-                    summary + "▌"
+                    complete_summary
                 )
-
-
-        # Remove streaming cursor
-        summary_placeholder.markdown(
-            summary
-        )
-
 
     except Exception as e:
 
-        summary_placeholder.empty()
-
         st.error(
-            f"❌ Error generating summary: {str(e)}"
+            "❌ Failed to generate the summary."
+        )
+
+        st.caption(
+            "Please check your Gemini API configuration."
         )
 
         st.stop()
 
+    # -------------------------------------------------
+    # Save history
+    # -------------------------------------------------
 
-    # --------------------------------------------------------
-    # Generation Time
-    # --------------------------------------------------------
+    if complete_summary.strip():
 
-    summary_time = round(
-        time.time() - summary_start,
-        2
-    )
+        st.session_state.history.append(
+            {
+                "title": complete_summary[:80],
+                "url": url
+            }
+        )
 
-
-    st.success(
-        f"✅ Summary generated in "
-        f"{summary_time} seconds"
-    )
-
-
-    # --------------------------------------------------------
+    # -------------------------------------------------
     # Powered by Gemini
-    # --------------------------------------------------------
+    # -------------------------------------------------
 
-    st.caption(
-        "✨ Powered by Gemini"
-    )
-
-
-    # --------------------------------------------------------
-    # Download Summary
-    # --------------------------------------------------------
-
-    st.download_button(
-        label="📥 Download Summary",
-        data=summary,
-        file_name="news_summary.txt",
-        mime="text/plain",
-        use_container_width=True
-    )
+    st.caption("✨ Powered by Gemini")
