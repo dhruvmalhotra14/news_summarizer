@@ -38,10 +38,8 @@ with st.sidebar:
 
         for i, item in enumerate(st.session_state.history, 1):
 
-            title = item.get("title", "News Article")
-
             st.markdown(
-                f"**{i}.** {title}"
+                f"**{i}.** {item.get('title', 'News Article')}"
             )
 
     else:
@@ -64,11 +62,15 @@ with st.sidebar:
 # MAIN TITLE
 # ==========================================
 
-st.title("🔗 Article Input")
+st.title("📰 News Summarizer")
+
+st.markdown(
+    "Paste a news article URL below and generate a concise summary."
+)
 
 
 # ==========================================
-# ARTICLE INPUT FORM
+# ARTICLE URL FORM
 # ==========================================
 
 with st.form("article_form"):
@@ -90,30 +92,33 @@ with st.form("article_form"):
 
 if generate:
 
-    # --------------------------------------
-    # Check URL
-    # --------------------------------------
-
     if not url.strip():
 
-        st.warning(
-            "⚠️ Please enter a news article URL."
-        )
-
+        st.warning("⚠️ Please enter a news article URL.")
         st.stop()
 
 
-    # --------------------------------------
-    # Extract Article
-    # --------------------------------------
+    # ======================================
+    # EXTRACT ARTICLE
+    # ======================================
 
     with st.spinner("🔎 Extracting article..."):
 
         try:
 
-            article_text, title = extract_article(url)
+            result = extract_article(url)
 
-        except Exception:
+            if result is None:
+
+                st.error(
+                    "❌ Unable to extract the article."
+                )
+
+                st.stop()
+
+            article_text, title = result
+
+        except Exception as e:
 
             st.error(
                 "❌ Unable to extract the article from this website. "
@@ -123,9 +128,9 @@ if generate:
             st.stop()
 
 
-    # --------------------------------------
-    # Validate Article
-    # --------------------------------------
+    # ======================================
+    # CHECK CONTENT
+    # ======================================
 
     if not article_text or len(article_text.strip()) < 100:
 
@@ -147,10 +152,6 @@ if generate:
 
     full_summary = ""
 
-
-    # --------------------------------------
-    # Generate Summary
-    # --------------------------------------
 
     with st.spinner("Generating summary..."):
 
@@ -174,7 +175,7 @@ if generate:
 
 
     # ======================================
-    # DOWNLOAD SUMMARY
+    # DOWNLOAD BUTTON
     # ======================================
 
     st.download_button(
@@ -187,7 +188,7 @@ if generate:
 
 
     # ======================================
-    # SAVE TO HISTORY
+    # SAVE HISTORY
     # ======================================
 
     st.session_state.history.append(
