@@ -1,11 +1,12 @@
 import streamlit as st
+
 from extractor import extract_article
 from ai import generate_summary
 
 
-# ==========================================
-# PAGE CONFIGURATION
-# ==========================================
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
     page_title="News Summarizer",
@@ -14,17 +15,17 @@ st.set_page_config(
 )
 
 
-# ==========================================
+# =========================================================
 # SESSION STATE
-# ==========================================
+# =========================================================
 
 if "history" not in st.session_state:
     st.session_state.history = []
 
 
-# ==========================================
+# =========================================================
 # SIDEBAR
-# ==========================================
+# =========================================================
 
 with st.sidebar:
 
@@ -36,10 +37,13 @@ with st.sidebar:
 
     if st.session_state.history:
 
-        for i, item in enumerate(st.session_state.history, 1):
+        for i, item in enumerate(
+            st.session_state.history,
+            start=1
+        ):
 
             st.markdown(
-                f"**{i}.** {item.get('title', 'News Article')}"
+                f"**{i}.** {item['title']}"
             )
 
     else:
@@ -58,93 +62,95 @@ with st.sidebar:
         st.rerun()
 
 
-# ==========================================
-# MAIN TITLE
-# ==========================================
+# =========================================================
+# MAIN PAGE
+# =========================================================
 
 st.title("📰 News Summarizer")
 
-st.markdown(
+st.write(
     "Paste a news article URL below and generate a concise summary."
 )
 
 
-# ==========================================
-# ARTICLE URL FORM
-# ==========================================
+# =========================================================
+# URL INPUT FORM
+# =========================================================
 
-with st.form("article_form"):
+with st.form("news_form"):
 
     url = st.text_input(
         "🔗 Paste News Article URL",
         placeholder="https://..."
     )
 
-    generate = st.form_submit_button(
+    generate_button = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
     )
 
 
-# ==========================================
+# =========================================================
 # GENERATE SUMMARY
-# ==========================================
+# =========================================================
 
-if generate:
+if generate_button:
+
+    # -----------------------------------------------------
+    # CHECK URL
+    # -----------------------------------------------------
 
     if not url.strip():
 
-        st.warning("⚠️ Please enter a news article URL.")
-        st.stop()
-
-
-    # ======================================
-    # EXTRACT ARTICLE
-    # ======================================
-
-    with st.spinner("🔎 Extracting article..."):
-
-        try:
-
-            result = extract_article(url)
-
-            if result is None:
-
-                st.error(
-                    "❌ Unable to extract the article."
-                )
-
-                st.stop()
-
-            article_text, title = result
-
-        except Exception as e:
-
-            st.error(
-                "❌ Unable to extract the article from this website. "
-                "The publisher may be blocking automated access."
-            )
-
-            st.stop()
-
-
-    # ======================================
-    # CHECK CONTENT
-    # ======================================
-
-    if not article_text or len(article_text.strip()) < 100:
-
-        st.error(
-            "❌ Unable to extract enough article content "
-            "from this website."
+        st.warning(
+            "⚠️ Please enter a news article URL."
         )
 
         st.stop()
 
 
-    # ======================================
+    # -----------------------------------------------------
+    # CHECK URL FORMAT
+    # -----------------------------------------------------
+
+    if not (
+        url.startswith("http://")
+        or url.startswith("https://")
+    ):
+
+        st.error(
+            "❌ Please enter a valid article URL."
+        )
+
+        st.stop()
+
+
+    # -----------------------------------------------------
+    # EXTRACT ARTICLE
+    # -----------------------------------------------------
+
+    with st.spinner("🔎 Extracting article..."):
+
+        article_text = extract_article(url)
+
+
+    # -----------------------------------------------------
+    # EXTRACTION FAILED
+    # -----------------------------------------------------
+
+    if not article_text:
+
+        st.error(
+            "❌ Unable to extract the article from this website. "
+            "The publisher may be blocking automated access."
+        )
+
+        st.stop()
+
+
+    # -----------------------------------------------------
     # SUMMARY
-    # ======================================
+    # -----------------------------------------------------
 
     st.subheader("✨ Summary")
 
@@ -153,9 +159,9 @@ if generate:
     full_summary = ""
 
 
-    with st.spinner("Generating summary..."):
+    try:
 
-        try:
+        with st.spinner("Generating summary..."):
 
             for chunk in generate_summary(article_text):
 
@@ -165,18 +171,19 @@ if generate:
                     full_summary
                 )
 
-        except Exception as e:
 
-            st.error(
-                f"❌ Error generating summary: {e}"
-            )
+    except Exception as e:
 
-            st.stop()
+        st.error(
+            f"❌ Error generating summary: {e}"
+        )
+
+        st.stop()
 
 
-    # ======================================
-    # DOWNLOAD BUTTON
-    # ======================================
+    # -----------------------------------------------------
+    # DOWNLOAD SUMMARY
+    # -----------------------------------------------------
 
     st.download_button(
         label="📥 Download Summary",
@@ -187,13 +194,13 @@ if generate:
     )
 
 
-    # ======================================
+    # -----------------------------------------------------
     # SAVE HISTORY
-    # ======================================
+    # -----------------------------------------------------
 
     st.session_state.history.append(
         {
-            "title": title if title else "News Article",
+            "title": "News Article",
             "summary": full_summary,
             "url": url
         }

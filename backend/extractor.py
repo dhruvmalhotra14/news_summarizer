@@ -36,10 +36,7 @@ def clean_text(text):
     if not text:
         return ""
 
-    # Remove excessive spaces
     text = re.sub(r"[ \t]+", " ", text)
-
-    # Remove excessive blank lines
     text = re.sub(r"\n\s*\n+", "\n\n", text)
 
     lines = []
@@ -51,14 +48,15 @@ def clean_text(text):
         if not line:
             continue
 
-        # Ignore obvious error messages
         lower = line.lower()
 
+        # Remove common blocking/error text
         if (
             "403 forbidden" in lower
             or "access denied" in lower
             or "request blocked" in lower
-            or "cloudfront" in lower
+            or "checking your browser" in lower
+            or "just a moment" in lower
         ):
             continue
 
@@ -68,21 +66,17 @@ def clean_text(text):
 
 
 # =========================================================
-# CHECK VALID ARTICLE TEXT
+# VALIDATE ARTICLE
 # =========================================================
 
 def is_valid_article(text):
-    """
-    Check whether the extracted text looks like
-    actual article content.
-    """
+    """Check whether extracted text looks like article content."""
 
     if not text:
         return False
 
     text = clean_text(text)
 
-    # We don't require 500 characters anymore.
     if len(text) < 250:
         return False
 
@@ -92,9 +86,7 @@ def is_valid_article(text):
         "403 forbidden",
         "access denied",
         "request blocked",
-        "cloudfront",
         "captcha",
-        "enable javascript",
         "checking your browser",
         "just a moment",
     ]
@@ -108,11 +100,11 @@ def is_valid_article(text):
 
 
 # =========================================================
-# DIRECT REQUEST
+# GET WEBPAGE
 # =========================================================
 
 def get_page(url):
-    """Download webpage using requests."""
+    """Download webpage."""
 
     try:
 
@@ -130,7 +122,7 @@ def get_page(url):
 
 
 # =========================================================
-# TRAFILATURA EXTRACTION
+# TRAFILATURA
 # =========================================================
 
 def extract_with_trafilatura(html):
@@ -138,7 +130,6 @@ def extract_with_trafilatura(html):
 
     try:
 
-        # First attempt
         text = trafilatura.extract(
             html,
             include_comments=False,
@@ -151,7 +142,7 @@ def extract_with_trafilatura(html):
         if is_valid_article(text):
             return clean_text(text)
 
-        # Second attempt with recall
+        # Second attempt
         text = trafilatura.extract(
             html,
             include_comments=False,
@@ -170,7 +161,7 @@ def extract_with_trafilatura(html):
 
 
 # =========================================================
-# BEAUTIFULSOUP EXTRACTION
+# BEAUTIFULSOUP
 # =========================================================
 
 def extract_with_beautifulsoup(html):
@@ -180,7 +171,7 @@ def extract_with_beautifulsoup(html):
 
         soup = BeautifulSoup(html, "html.parser")
 
-        # Remove unwanted elements
+        # Remove unnecessary elements
         for element in soup([
             "script",
             "style",
@@ -193,11 +184,10 @@ def extract_with_beautifulsoup(html):
             "iframe",
             "svg"
         ]):
-
             element.decompose()
 
         # -------------------------------------------------
-        # Try <article>
+        # ARTICLE TAG
         # -------------------------------------------------
 
         article = soup.find("article")
@@ -215,7 +205,7 @@ def extract_with_beautifulsoup(html):
                 return text
 
         # -------------------------------------------------
-        # Try common article containers
+        # COMMON ARTICLE CONTAINERS
         # -------------------------------------------------
 
         selectors = [
@@ -250,16 +240,16 @@ def extract_with_beautifulsoup(html):
                     return text
 
         # -------------------------------------------------
-        # Paragraph fallback
+        # PARAGRAPH FALLBACK
         # -------------------------------------------------
 
         paragraphs = soup.find_all("p")
 
         paragraph_text = []
 
-        for p in paragraphs:
+        for paragraph in paragraphs:
 
-            text = p.get_text(
+            text = paragraph.get_text(
                 " ",
                 strip=True
             )
@@ -281,13 +271,12 @@ def extract_with_beautifulsoup(html):
 
 
 # =========================================================
-# JSON-LD EXTRACTION
+# JSON-LD
 # =========================================================
 
 def extract_from_json_ld(html):
     """
     Try extracting articleBody from JSON-LD metadata.
-    Many news websites include the article text here.
     """
 
     try:
@@ -313,12 +302,18 @@ def extract_from_json_ld(html):
             objects = []
 
             if isinstance(data, dict):
+
                 objects.append(data)
 
                 if "@graph" in data:
-                    objects.extend(data["@graph"])
+
+                    graph = data["@graph"]
+
+                    if isinstance(graph, list):
+                        objects.extend(graph)
 
             elif isinstance(data, list):
+
                 objects.extend(data)
 
             for item in objects:
@@ -347,7 +342,7 @@ def extract_from_json_ld(html):
 
 def extract_with_requests(url):
     """
-    Try extracting article directly from the publisher.
+    Try extracting article directly from publisher.
     """
 
     response = get_page(url)
@@ -355,18 +350,13 @@ def extract_with_requests(url):
     if response is None:
         return ""
 
-    # -----------------------------------------------------
-    # Even if status is 403, don't immediately give up.
-    # Sometimes the response still contains useful HTML.
-    # -----------------------------------------------------
-
     html = response.text
 
     if not html:
         return ""
 
     # -----------------------------------------------------
-    # Method 1: Trafilatura
+    # 1. Trafilatura
     # -----------------------------------------------------
 
     text = extract_with_trafilatura(html)
@@ -375,7 +365,7 @@ def extract_with_requests(url):
         return text
 
     # -----------------------------------------------------
-    # Method 2: JSON-LD articleBody
+    # 2. JSON-LD
     # -----------------------------------------------------
 
     text = extract_from_json_ld(html)
@@ -384,7 +374,7 @@ def extract_with_requests(url):
         return text
 
     # -----------------------------------------------------
-    # Method 3: BeautifulSoup
+    # 3. BeautifulSoup
     # -----------------------------------------------------
 
     text = extract_with_beautifulsoup(html)
@@ -401,10 +391,8 @@ def extract_with_requests(url):
 
 def extract_with_jina(url):
     """
-    Extract article through Jina Reader.
-
-    This is especially useful when publishers such as
-    Indian Express or NDTV block direct requests.
+    Use Jina Reader as a fallback for websites
+    that block direct automated requests.
     """
 
     try:
@@ -430,9 +418,7 @@ def extract_with_jina(url):
         if response.status_code != 200:
             return ""
 
-        text = response.text
-
-        text = clean_text(text)
+        text = clean_text(response.text)
 
         if is_valid_article(text):
             return text
@@ -444,7 +430,7 @@ def extract_with_jina(url):
 
 
 # =========================================================
-# DOMAIN DETECTION
+# DOMAIN
 # =========================================================
 
 def get_domain(url):
@@ -463,20 +449,15 @@ def get_domain(url):
 
 
 # =========================================================
-# MAIN EXTRACTION FUNCTION
+# MAIN FUNCTION
 # =========================================================
 
 def extract_article(url):
     """
     Main article extraction function.
 
-    Extraction order:
-
-    1. Jina Reader for commonly blocked publishers
-    2. Direct requests + Trafilatura
-    3. JSON-LD
-    4. BeautifulSoup
-    5. Jina Reader final fallback
+    Returns:
+        article text as a string
     """
 
     url = url.strip()
@@ -485,7 +466,7 @@ def extract_article(url):
         return None
 
     # -----------------------------------------------------
-    # Validate URL
+    # URL VALIDATION
     # -----------------------------------------------------
 
     parsed = urlparse(url)
@@ -496,7 +477,7 @@ def extract_article(url):
     domain = get_domain(url)
 
     # -----------------------------------------------------
-    # Publishers that frequently block automated requests
+    # Publishers that frequently block direct requests
     # -----------------------------------------------------
 
     blocked_publishers = [
@@ -514,8 +495,7 @@ def extract_article(url):
     )
 
     # -----------------------------------------------------
-    # METHOD 1
-    # Jina first for blocked publishers
+    # 1. JINA FIRST FOR BLOCKED PUBLISHERS
     # -----------------------------------------------------
 
     if is_blocked_publisher:
@@ -526,8 +506,7 @@ def extract_article(url):
             return text
 
     # -----------------------------------------------------
-    # METHOD 2
-    # Direct publisher request
+    # 2. DIRECT EXTRACTION
     # -----------------------------------------------------
 
     text = extract_with_requests(url)
@@ -536,8 +515,7 @@ def extract_article(url):
         return text
 
     # -----------------------------------------------------
-    # METHOD 3
-    # Final Jina fallback
+    # 3. JINA FINAL FALLBACK
     # -----------------------------------------------------
 
     text = extract_with_jina(url)
@@ -546,7 +524,7 @@ def extract_article(url):
         return text
 
     # -----------------------------------------------------
-    # Nothing worked
+    # FAILED
     # -----------------------------------------------------
 
     return None
