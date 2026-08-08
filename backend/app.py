@@ -5,9 +5,9 @@ from extractor import extract_article
 from ai import generate_summary
 
 
-# -------------------------------------------------
+# ============================================================
 # Page Configuration
-# -------------------------------------------------
+# ============================================================
 
 st.set_page_config(
     page_title="News Summarizer",
@@ -16,17 +16,18 @@ st.set_page_config(
 )
 
 
-# -------------------------------------------------
+# ============================================================
 # Session State
-# -------------------------------------------------
+# ============================================================
 
 if "history" not in st.session_state:
+
     st.session_state.history = []
 
 
-# -------------------------------------------------
+# ============================================================
 # Sidebar
-# -------------------------------------------------
+# ============================================================
 
 with st.sidebar:
 
@@ -38,37 +39,47 @@ with st.sidebar:
 
     if not st.session_state.history:
 
-        st.info("No summaries generated yet.")
+        st.info(
+            "No summaries generated yet."
+        )
 
     else:
 
-        for item in reversed(st.session_state.history):
+        for item in reversed(
+            st.session_state.history
+        ):
 
-            st.write("•", item)
+            st.write(
+                "•",
+                item
+            )
 
     st.markdown("---")
 
-    if st.button("🗑 Clear History"):
+    if st.button(
+        "🗑 Clear History",
+        use_container_width=True
+    ):
 
         st.session_state.history = []
 
         st.rerun()
 
 
-# -------------------------------------------------
-# Main UI
-# -------------------------------------------------
+# ============================================================
+# Main Page
+# ============================================================
 
 st.title("📰 News Summarizer")
 
 st.caption(
-    "Summarize news articles using AI"
+    "Generate concise summaries from news articles using Gemini AI."
 )
 
 
-# -------------------------------------------------
-# Input Form
-# -------------------------------------------------
+# ============================================================
+# URL Input
+# ============================================================
 
 with st.form("summary_form"):
 
@@ -79,183 +90,186 @@ with st.form("summary_form"):
         placeholder="https://example.com/news/article"
     )
 
-    st.markdown(
-        "**If the website blocks extraction, paste the article text below:**"
-    )
-
-    article_text = st.text_area(
-        "📄 Article Text (Optional)",
-        placeholder=(
-            "Paste the article text here if URL extraction "
-            "is blocked..."
-        ),
-        height=180
-    )
-
     generate = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
     )
 
 
-# -------------------------------------------------
+# ============================================================
 # Generate Summary
-# -------------------------------------------------
+# ============================================================
 
 if generate:
 
-    # ---------------------------------------------
-    # Check Input
-    # ---------------------------------------------
+    # --------------------------------------------------------
+    # Validate URL
+    # --------------------------------------------------------
 
-    if not url.strip() and not article_text.strip():
+    if not url.strip():
 
         st.warning(
-            "Please enter a news article URL or paste article text."
+            "Please enter a news article URL."
         )
 
         st.stop()
 
 
+    # --------------------------------------------------------
+    # Extract Article
+    # --------------------------------------------------------
+
+    extraction_start = time.time()
+
     try:
 
-        # -----------------------------------------
-        # Extract Article
-        # -----------------------------------------
+        with st.spinner(
+            "Extracting article..."
+        ):
 
-        if url.strip():
-
-            start = time.time()
-
-            with st.spinner("Extracting article..."):
-
-                try:
-
-                    title, article = extract_article(url)
-
-                except Exception as extraction_error:
-
-                    # If URL extraction fails but user
-                    # provided article text, use it.
-
-                    if article_text.strip():
-
-                        title = "Pasted Article"
-
-                        article = article_text.strip()
-
-                        st.info(
-                            "URL extraction was blocked. "
-                            "Using the pasted article text."
-                        )
-
-                    else:
-
-                        raise extraction_error
-
-            extract_time = round(
-                time.time() - start,
-                2
+            title, article_text = extract_article(
+                url
             )
-
-        else:
-
-            title = "Pasted Article"
-
-            article = article_text.strip()
-
-            extract_time = 0
-
-
-        # -----------------------------------------
-        # Validate Article
-        # -----------------------------------------
-
-        if len(article.strip()) < 100:
-
-            st.warning(
-                "The article text is too short to generate "
-                "a meaningful summary."
-            )
-
-            st.stop()
-
-
-        # -----------------------------------------
-        # History
-        # -----------------------------------------
-
-        if title not in st.session_state.history:
-
-            st.session_state.history.append(title)
-
-
-        # -----------------------------------------
-        # Display Title
-        # -----------------------------------------
-
-        st.subheader(title)
-
-
-        if extract_time > 0:
-
-            st.caption(
-                f"Article extracted in {extract_time} seconds"
-            )
-
-
-        # -----------------------------------------
-        # Generate AI Summary
-        # -----------------------------------------
-
-        start = time.time()
-
-        placeholder = st.empty()
-
-        summary = ""
-
-
-        with st.spinner("Generating summary..."):
-
-            for chunk in generate_summary(article):
-
-                summary += chunk
-
-                # ChatGPT-style streaming
-                placeholder.markdown(
-                    summary + "▌"
-                )
-
-
-        # Remove cursor
-        placeholder.markdown(summary)
-
-
-        ai_time = round(
-            time.time() - start,
-            2
-        )
-
-
-        st.success(
-            f"✅ Summary generated in {ai_time} seconds"
-        )
-
-
-        # -----------------------------------------
-        # Download
-        # -----------------------------------------
-
-        st.download_button(
-            "📥 Download Summary",
-            summary,
-            file_name="news_summary.txt",
-            mime="text/plain"
-        )
-
 
     except Exception as e:
 
         st.error(
             f"❌ {str(e)}"
         )
+
+        st.stop()
+
+
+    extraction_time = round(
+        time.time() - extraction_start,
+        2
+    )
+
+
+    # --------------------------------------------------------
+    # Validate extracted article
+    # --------------------------------------------------------
+
+    if not article_text:
+
+        st.error(
+            "❌ No article content could be extracted."
+        )
+
+        st.stop()
+
+
+    if len(article_text.strip()) < 100:
+
+        st.error(
+            "❌ The extracted article is too short."
+        )
+
+        st.stop()
+
+
+    # --------------------------------------------------------
+    # Add to History
+    # --------------------------------------------------------
+
+    if title not in st.session_state.history:
+
+        st.session_state.history.append(
+            title
+        )
+
+
+    # --------------------------------------------------------
+    # Article Information
+    # --------------------------------------------------------
+
+    st.subheader(title)
+
+    st.caption(
+        f"Article extracted in "
+        f"{extraction_time} seconds"
+    )
+
+
+    # --------------------------------------------------------
+    # Generate Gemini Summary
+    # --------------------------------------------------------
+
+    summary_start = time.time()
+
+    summary_placeholder = st.empty()
+
+    summary = ""
+
+
+    try:
+
+        with st.spinner(
+            "Generating summary..."
+        ):
+
+            for chunk in generate_summary(
+                article_text
+            ):
+
+                summary += chunk
+
+                # Streaming output
+                summary_placeholder.markdown(
+                    summary + "▌"
+                )
+
+
+        # Remove streaming cursor
+        summary_placeholder.markdown(
+            summary
+        )
+
+
+    except Exception as e:
+
+        summary_placeholder.empty()
+
+        st.error(
+            f"❌ Error generating summary: {str(e)}"
+        )
+
+        st.stop()
+
+
+    # --------------------------------------------------------
+    # Generation Time
+    # --------------------------------------------------------
+
+    summary_time = round(
+        time.time() - summary_start,
+        2
+    )
+
+
+    st.success(
+        f"✅ Summary generated in "
+        f"{summary_time} seconds"
+    )
+
+
+    # --------------------------------------------------------
+    # Powered by Gemini
+    # --------------------------------------------------------
+
+    st.caption(
+        "✨ Powered by Gemini"
+    )
+
+
+    # --------------------------------------------------------
+    # Download Summary
+    # --------------------------------------------------------
+
+    st.download_button(
+        label="📥 Download Summary",
+        data=summary,
+        file_name="news_summary.txt",
+        mime="text/plain",
+        use_container_width=True
+    )
