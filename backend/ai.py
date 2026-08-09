@@ -14,7 +14,7 @@ def generate_summary(article_text):
     )
 
     # Keep enough article content for a good summary
-    article_text = article_text[:2500]
+    article_text = article_text[:3000]
 
     prompt = summary_prompt(article_text)
 
