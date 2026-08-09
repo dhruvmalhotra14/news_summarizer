@@ -2,11 +2,23 @@ from google import genai
 import streamlit as st
 from prompt import summary_prompt
 
+
+# =====================================================
+# GEMINI CLIENT
+# =====================================================
+
 client = genai.Client(
     api_key=st.secrets["GEMINI_API_KEY"]
 )
 
+
+# =====================================================
+# GENERATE SUMMARY
+# =====================================================
+
 def generate_summary(article_text):
+
+    # Limit input size
     article_text = article_text[:3000]
 
     prompt = summary_prompt(article_text)
@@ -17,5 +29,7 @@ def generate_summary(article_text):
     )
 
     for chunk in response:
+
         if chunk.text:
+
             yield chunk.text
