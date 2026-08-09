@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 
 from extractor import extract_article
@@ -68,38 +69,35 @@ with st.sidebar:
 st.title("📰 News Summarizer")
 
 st.markdown(
-    "Enter a news article URL and generate an AI-powered summary."
+    "Enter a news article URL and generate a concise summary."
 )
 
 
 # =====================================================
-# URL INPUT
+# ARTICLE INPUT + ENTER SUPPORT
 # =====================================================
 
 st.subheader("🔗 Article Input")
 
-url = st.text_input(
-    "Paste News Article URL",
-    placeholder="https://example.com/news/article",
-    label_visibility="visible"
-)
+with st.form("news_summary_form"):
 
+    url = st.text_input(
+        "Paste News Article URL",
+        placeholder="https://example.com/news/article",
+        label_visibility="visible"
+    )
 
-# =====================================================
-# GENERATE BUTTON
-# =====================================================
-
-generate_button = st.button(
-    "🚀 Generate Summary",
-    use_container_width=True
-)
+    submitted = st.form_submit_button(
+        "🚀 Generate Summary",
+        use_container_width=True
+    )
 
 
 # =====================================================
 # PROCESS ARTICLE
 # =====================================================
 
-if generate_button:
+if submitted:
 
     if not url.strip():
 
@@ -113,11 +111,19 @@ if generate_button:
     # Extract article
     # -------------------------------------------------
 
+    extraction_start = time.perf_counter()
+
     with st.spinner(
         "🔎 Extracting article..."
     ):
 
         article_text = extract_article(url)
+
+    extraction_time = time.perf_counter() - extraction_start
+
+    # -------------------------------------------------
+    # Extraction failed
+    # -------------------------------------------------
 
     if not article_text:
 
@@ -131,6 +137,15 @@ if generate_button:
         )
 
         st.stop()
+
+    # -------------------------------------------------
+    # Extraction successful
+    # -------------------------------------------------
+
+    st.success(
+        f"✓ Article extracted successfully "
+        f"in {extraction_time:.2f} seconds"
+    )
 
     # -------------------------------------------------
     # Check article length
@@ -149,7 +164,7 @@ if generate_button:
     # Generate summary
     # -------------------------------------------------
 
-    st.subheader("✨ AI Summary")
+    st.subheader("✨ Summary")
 
     summary_placeholder = st.empty()
 
@@ -171,7 +186,7 @@ if generate_button:
                     complete_summary
                 )
 
-    except Exception as e:
+    except Exception:
 
         st.error(
             "❌ Failed to generate the summary."
@@ -184,10 +199,22 @@ if generate_button:
         st.stop()
 
     # -------------------------------------------------
-    # Save history
+    # Download summary
     # -------------------------------------------------
 
     if complete_summary.strip():
+
+        st.download_button(
+            label="⬇️ Download Summary",
+            data=complete_summary,
+            file_name="news_summary.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+
+        # -------------------------------------------------
+        # Save history
+        # -------------------------------------------------
 
         st.session_state.history.append(
             {
@@ -195,5 +222,3 @@ if generate_button:
                 "url": url
             }
         )
-
-    
