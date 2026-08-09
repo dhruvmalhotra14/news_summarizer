@@ -19,7 +19,7 @@ client = genai.Client(
 def generate_summary(article_text):
 
     # Limit input size
-    article_text = article_text[:3000]
+    article_text = article_text[:2000]
 
     prompt = summary_prompt(article_text)
 
