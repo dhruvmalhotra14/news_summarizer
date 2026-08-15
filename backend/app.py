@@ -99,9 +99,9 @@ with st.form("news_summary_form"):
 
 if submitted:
 
-    # -------------------------------------------------
-    # Validate URL
-    # -------------------------------------------------
+    # =================================================
+    # VALIDATE URL
+    # =================================================
 
     if not url.strip():
 
@@ -125,13 +125,14 @@ if submitted:
         article_text = extract_article(url)
 
     extraction_time = (
-        time.perf_counter() - extraction_start
+        time.perf_counter()
+        - extraction_start
     )
 
 
-    # -------------------------------------------------
-    # Extraction failed
-    # -------------------------------------------------
+    # =================================================
+    # EXTRACTION FAILED
+    # =================================================
 
     if not article_text:
 
@@ -147,9 +148,9 @@ if submitted:
         st.stop()
 
 
-    # -------------------------------------------------
-    # Extraction successful
-    # -------------------------------------------------
+    # =================================================
+    # EXTRACTION SUCCESS
+    # =================================================
 
     st.success(
         f"✓ Article extracted successfully "
@@ -200,18 +201,19 @@ if submitted:
                 )
 
 
-        # ---------------------------------------------
-        # Calculate summary generation time
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # SUMMARY TIME
+        # -------------------------------------------------
 
         summary_time = (
-            time.perf_counter() - summary_start
+            time.perf_counter()
+            - summary_start
         )
 
 
-        # ---------------------------------------------
-        # Show generation time
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # SHOW SUMMARY TIME
+        # -------------------------------------------------
 
         st.success(
             f"✓ Summary generated in "
@@ -219,14 +221,18 @@ if submitted:
         )
 
 
-    except Exception:
+    # =================================================
+    # SHOW ACTUAL GEMINI ERROR
+    # =================================================
+
+    except Exception as e:
 
         st.error(
             "❌ Failed to generate the summary."
         )
 
-        st.caption(
-            "Please check your Gemini API configuration."
+        st.error(
+            f"Gemini error: {e}"
         )
 
         st.stop()
