@@ -1,8 +1,7 @@
 def summary_prompt(article_text):
-    return f"""
-You are an AI news summarizer.
 
-Read the following news article and return a concise summary in exactly 5 bullet points.
+    return f"""
+Summarize the following news article in exactly 5 concise bullet points.
 
 Include:
 - Main topic
@@ -10,8 +9,12 @@ Include:
 - Important people or organizations
 - Conclusion
 
-Keep the summary under 200 words.
-Do not use markdown headings or long explanations.
+Rules:
+- Keep the total summary under 120 words.
+- Use simple and clear language.
+- Do not add information that is not present in the article.
+- Do not use headings.
+- Return only 5 bullet points.
 
 Article:
 {article_text}

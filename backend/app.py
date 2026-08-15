@@ -69,25 +69,22 @@ with st.sidebar:
 st.title("📰 News Summarizer")
 
 st.markdown(
-    "Enter a news article URL and generate a concise summary."
+    "Paste a news article URL and generate a concise summary."
 )
 
 
 # =====================================================
-# ARTICLE INPUT
+# FORM
 # =====================================================
 
-st.subheader("🔗 Article Input")
-
-with st.form("news_summary_form"):
+with st.form("news_form"):
 
     url = st.text_input(
         "Paste News Article URL",
-        placeholder="https://example.com/news/article",
-        label_visibility="visible"
+        placeholder="https://example.com/news/article"
     )
 
-    submitted = st.form_submit_button(
+    generate_button = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
     )
@@ -97,10 +94,10 @@ with st.form("news_summary_form"):
 # PROCESS ARTICLE
 # =====================================================
 
-if submitted:
+if generate_button:
 
     # -------------------------------------------------
-    # Validate URL
+    # CHECK URL
     # -------------------------------------------------
 
     if not url.strip():
@@ -112,9 +109,9 @@ if submitted:
         st.stop()
 
 
-    # =================================================
-    # ARTICLE EXTRACTION
-    # =================================================
+    # -------------------------------------------------
+    # EXTRACT ARTICLE
+    # -------------------------------------------------
 
     extraction_start = time.perf_counter()
 
@@ -125,12 +122,13 @@ if submitted:
         article_text = extract_article(url)
 
     extraction_time = (
-        time.perf_counter() - extraction_start
+        time.perf_counter()
+        - extraction_start
     )
 
 
     # -------------------------------------------------
-    # Extraction failed
+    # EXTRACTION FAILED
     # -------------------------------------------------
 
     if not article_text:
@@ -148,18 +146,8 @@ if submitted:
 
 
     # -------------------------------------------------
-    # Extraction successful
-    # -------------------------------------------------
-
-    st.success(
-        f"✓ Article extracted successfully "
-        f"in {extraction_time:.2f} seconds"
-    )
-
-
-    # =================================================
     # CHECK ARTICLE LENGTH
-    # =================================================
+    # -------------------------------------------------
 
     if len(article_text.strip()) < 300:
 
@@ -171,15 +159,20 @@ if submitted:
         st.stop()
 
 
-    # =================================================
+    # -------------------------------------------------
+    # SHOW EXTRACTION TIME
+    # -------------------------------------------------
+
+    st.success(
+        f"✓ Article extracted in {extraction_time:.2f} seconds"
+    )
+
+
+    # -------------------------------------------------
     # GENERATE SUMMARY
-    # =================================================
+    # -------------------------------------------------
 
     st.subheader("✨ Summary")
-
-    summary_placeholder = st.empty()
-
-    complete_summary = ""
 
     summary_start = time.perf_counter()
 
@@ -189,37 +182,29 @@ if submitted:
             "🤖 Generating summary..."
         ):
 
-            for chunk in generate_summary(
+            complete_summary = generate_summary(
                 article_text
-            ):
-
-                complete_summary += chunk
-
-                summary_placeholder.markdown(
-                    complete_summary
-                )
-
-
-        # ---------------------------------------------
-        # Calculate actual summary generation time
-        # ---------------------------------------------
+            )
 
         summary_time = (
-            time.perf_counter() - summary_start
+            time.perf_counter()
+            - summary_start
         )
 
-
-        # ---------------------------------------------
-        # Show generation time
-        # ---------------------------------------------
+        st.markdown(
+            complete_summary
+        )
 
         st.success(
-            f"✓ Summary generated in "
-            f"{summary_time:.2f} seconds"
+            f"✓ Summary generated in {summary_time:.2f} seconds"
         )
 
 
-    except Exception:
+    # -------------------------------------------------
+    # ERROR
+    # -------------------------------------------------
+
+    except Exception as e:
 
         st.error(
             "❌ Failed to generate the summary."
@@ -232,24 +217,24 @@ if submitted:
         st.stop()
 
 
-    # =================================================
+    # -------------------------------------------------
     # DOWNLOAD SUMMARY
-    # =================================================
+    # -------------------------------------------------
+
+    st.download_button(
+        label="⬇️ Download Summary",
+        data=complete_summary,
+        file_name="news_summary.txt",
+        mime="text/plain",
+        use_container_width=True
+    )
+
+
+    # -------------------------------------------------
+    # SAVE HISTORY
+    # -------------------------------------------------
 
     if complete_summary.strip():
-
-        st.download_button(
-            label="⬇️ Download Summary",
-            data=complete_summary,
-            file_name="news_summary.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
-
-
-        # =================================================
-        # SAVE HISTORY
-        # =================================================
 
         st.session_state.history.append(
             {
