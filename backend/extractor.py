@@ -1,5 +1,6 @@
 import requests
 import trafilatura
+
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
@@ -28,6 +29,7 @@ def clean_text(text):
     lines = []
 
     for line in text.splitlines():
+
         line = line.strip()
 
         if line:
@@ -42,6 +44,7 @@ def extract_with_requests(url):
     """Try direct extraction using requests + Trafilatura."""
 
     try:
+
         response = requests.get(
             url,
             headers=HEADERS,
@@ -54,7 +57,11 @@ def extract_with_requests(url):
 
         html = response.text
 
-        # First try Trafilatura
+
+        # -------------------------------------------------
+        # Try Trafilatura
+        # -------------------------------------------------
+
         text = trafilatura.extract(
             html,
             include_comments=False,
@@ -65,13 +72,22 @@ def extract_with_requests(url):
         )
 
         if text:
+
             text = clean_text(text)
 
             if len(text) >= 500:
                 return text
 
+
+        # -------------------------------------------------
         # BeautifulSoup fallback
-        soup = BeautifulSoup(html, "html.parser")
+        # -------------------------------------------------
+
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
+
 
         # Remove unwanted elements
         for element in soup([
@@ -84,12 +100,18 @@ def extract_with_requests(url):
             "aside",
             "form"
         ]):
+
             element.decompose()
 
+
+        # -------------------------------------------------
         # Try article tag
+        # -------------------------------------------------
+
         article = soup.find("article")
 
         if article:
+
             text = article.get_text(
                 separator="\n",
                 strip=True
@@ -100,11 +122,18 @@ def extract_with_requests(url):
             if len(text) >= 500:
                 return text
 
+
+        # -------------------------------------------------
         # Try paragraphs
+        # -------------------------------------------------
+
         paragraphs = soup.find_all("p")
 
         text = "\n".join(
-            p.get_text(" ", strip=True)
+            p.get_text(
+                " ",
+                strip=True
+            )
             for p in paragraphs
         )
 
@@ -113,8 +142,11 @@ def extract_with_requests(url):
         if len(text) >= 500:
             return text
 
+
     except Exception:
+
         pass
+
 
     return ""
 
@@ -128,7 +160,10 @@ def extract_with_jina(url):
     """
 
     try:
-        jina_url = "https://r.jina.ai/" + url
+
+        jina_url = (
+            "https://r.jina.ai/" + url
+        )
 
         response = requests.get(
             jina_url,
@@ -148,8 +183,11 @@ def extract_with_jina(url):
         if len(text) >= 500:
             return text
 
+
     except Exception:
+
         pass
+
 
     return ""
 
@@ -170,11 +208,20 @@ def extract_article(url):
     if not url:
         return None
 
+
+    # -------------------------------------------------
     # Basic URL validation
+    # -------------------------------------------------
+
     parsed = urlparse(url)
 
-    if parsed.scheme not in ("http", "https"):
+    if parsed.scheme not in (
+        "http",
+        "https"
+    ):
+
         return None
+
 
     # -------------------------------------------------
     # METHOD 1: Direct extraction
@@ -185,6 +232,7 @@ def extract_article(url):
     if text:
         return text
 
+
     # -------------------------------------------------
     # METHOD 2: Jina Reader fallback
     # -------------------------------------------------
@@ -193,5 +241,6 @@ def extract_article(url):
 
     if text:
         return text
+
 
     return None
