@@ -5,30 +5,23 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 
-# =====================================================
-# REQUEST HEADERS
-# =====================================================
-
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 "
-        "(KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/151.0.0.0 Safari/537.36"
     ),
     "Accept": (
-        "text/html,application/xhtml+xml,"
-        "application/xml;q=0.9,*/*;q=0.8"
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/avif,image/webp,*/*;q=0.8"
     ),
     "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
 }
 
 
-# =====================================================
-# CLEAN TEXT
-# =====================================================
-
 def clean_text(text):
+    """Clean extracted article text."""
 
     if not text:
         return ""
@@ -36,42 +29,34 @@ def clean_text(text):
     lines = []
 
     for line in text.splitlines():
-
-        line = " ".join(line.split())
+        line = line.strip()
 
         if line:
             lines.append(line)
 
-    return "\n\n".join(lines).strip()
+    text = "\n\n".join(lines)
+
+    return text.strip()
 
 
-# =====================================================
-# DIRECT EXTRACTION
-# =====================================================
-
-def extract_direct(url):
+def extract_with_requests(url):
+    """Try direct extraction using requests + Trafilatura."""
 
     try:
-
         response = requests.get(
             url,
             headers=HEADERS,
-            timeout=20,
+            timeout=15,
             allow_redirects=True
         )
-
-        print("STATUS:", response.status_code)
 
         if response.status_code != 200:
             return ""
 
         html = response.text
 
-        if not html:
-            return ""
-
         # -------------------------------------------------
-        # 1. Trafilatura
+        # Try Trafilatura
         # -------------------------------------------------
 
         text = trafilatura.extract(
@@ -79,21 +64,19 @@ def extract_direct(url):
             include_comments=False,
             include_tables=False,
             include_links=False,
-            favor_recall=True,
-            favor_precision=False
+            favor_precision=True,
+            favor_recall=True
         )
 
-        text = clean_text(text)
+        if text:
 
-        if len(text) >= 300:
+            text = clean_text(text)
 
-            print("EXTRACTED USING: Trafilatura")
-
-            return text
-
+            if len(text) >= 500:
+                return text
 
         # -------------------------------------------------
-        # 2. BeautifulSoup
+        # BeautifulSoup fallback
         # -------------------------------------------------
 
         soup = BeautifulSoup(
@@ -101,8 +84,7 @@ def extract_direct(url):
             "html.parser"
         )
 
-        # Remove unnecessary content
-
+        # Remove unwanted elements
         for element in soup([
             "script",
             "style",
@@ -111,15 +93,12 @@ def extract_direct(url):
             "footer",
             "header",
             "aside",
-            "form",
-            "svg"
+            "form"
         ]):
-
             element.decompose()
 
-
         # -------------------------------------------------
-        # 3. Article tag
+        # Try article tag
         # -------------------------------------------------
 
         article = soup.find("article")
@@ -133,102 +112,82 @@ def extract_direct(url):
 
             text = clean_text(text)
 
-            if len(text) >= 300:
-
-                print("EXTRACTED USING: Article tag")
-
+            if len(text) >= 500:
                 return text
 
-
         # -------------------------------------------------
-        # 4. Paragraphs
+        # Try paragraphs
         # -------------------------------------------------
 
         paragraphs = soup.find_all("p")
 
-        text = "\n\n".join(
+        text = "\n".join(
             p.get_text(
                 " ",
                 strip=True
             )
             for p in paragraphs
-            if len(
-                p.get_text(
-                    " ",
-                    strip=True
-                )
-            ) > 40
         )
 
         text = clean_text(text)
 
-        if len(text) >= 300:
-
-            print("EXTRACTED USING: Paragraphs")
-
+        if len(text) >= 500:
             return text
 
-    except Exception as e:
-
-        print(
-            "DIRECT EXTRACTION ERROR:",
-            e
-        )
+    except Exception:
+        pass
 
     return ""
 
 
-# =====================================================
-# JINA READER FALLBACK
-# =====================================================
+def extract_with_jina(url):
+    """
+    Fallback extractor using Jina Reader.
 
-def extract_jina(url):
+    Jina Reader converts a publicly accessible URL
+    into clean, LLM-friendly text.
+    """
 
     try:
 
+        jina_url = (
+            "https://r.jina.ai/" + url
+        )
+
         response = requests.get(
-            "https://r.jina.ai/" + url,
+            jina_url,
             headers={
                 "User-Agent": "NewsSummarizer/1.0"
             },
-            timeout=40
-        )
-
-        print(
-            "JINA STATUS:",
-            response.status_code
+            timeout=30
         )
 
         if response.status_code != 200:
             return ""
 
-        text = clean_text(
-            response.text
-        )
+        text = response.text
 
-        if len(text) >= 300:
+        text = clean_text(text)
 
-            print(
-                "EXTRACTED USING: Jina Reader"
-            )
-
+        if len(text) >= 500:
             return text
 
-    except Exception as e:
-
-        print(
-            "JINA ERROR:",
-            e
-        )
+    except Exception:
+        pass
 
     return ""
 
 
-# =====================================================
-# MAIN EXTRACTION FUNCTION
-# =====================================================
-
 def extract_article(url):
+    """
+    Main article extraction function.
+
+    Extraction order:
+
+    1. Direct requests + Trafilatura
+    2. BeautifulSoup fallback
+    3. Jina Reader fallback
+    """
 
     url = url.strip()
 
@@ -236,51 +195,33 @@ def extract_article(url):
         return None
 
     # -------------------------------------------------
-    # Validate URL
+    # Basic URL validation
     # -------------------------------------------------
 
-    try:
+    parsed = urlparse(url)
 
-        parsed = urlparse(url)
-
-        if parsed.scheme not in (
-            "http",
-            "https"
-        ):
-            return None
-
-        if not parsed.netloc:
-            return None
-
-    except Exception:
-
+    if parsed.scheme not in (
+        "http",
+        "https"
+    ):
         return None
 
-
     # -------------------------------------------------
-    # Try direct extraction
-    # -------------------------------------------------
-
-    article = extract_direct(url)
-
-    if article:
-
-        return article
-
-
-    # -------------------------------------------------
-    # Try Jina Reader
+    # METHOD 1: Direct extraction
     # -------------------------------------------------
 
-    article = extract_jina(url)
+    text = extract_with_requests(url)
 
-    if article:
-
-        return article
-
+    if text:
+        return text
 
     # -------------------------------------------------
-    # Nothing found
+    # METHOD 2: Jina Reader fallback
     # -------------------------------------------------
+
+    text = extract_with_jina(url)
+
+    if text:
+        return text
 
     return None
