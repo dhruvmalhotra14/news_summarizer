@@ -16,6 +16,22 @@ st.set_page_config(
     layout="wide"
 )
 
+# Hide the black datalist arrow icon from the input box
+st.markdown(
+    """
+    <style>
+    /* Removes the small dropdown/calendar-picker arrow from input fields */
+    input::-webkit-calendar-picker-indicator {
+        display: none !important;
+        opacity: 0 !important;
+        -webkit-appearance: none !important;
+        width: 0 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # =====================================================
 # SESSION STATE INITIALIZATION
@@ -78,7 +94,7 @@ with st.form("news_summary_form"):
         use_container_width=True
     )
 
-# Inject browser datalist so clicking the input box shows your past URLs
+# Inject browser datalist so clicking the input box still shows your past URLs
 past_unique_urls = list(dict.fromkeys([
     item.get("url") for item in reversed(st.session_state.history) if item.get("url")
 ]))
