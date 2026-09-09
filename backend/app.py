@@ -26,9 +26,6 @@ if "history" not in st.session_state:
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = ""
 
-if "selected_url" not in st.session_state:
-    st.session_state.selected_url = ""
-
 
 # =====================================================
 # SIDEBAR
@@ -51,7 +48,6 @@ with st.sidebar:
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
         st.session_state.current_summary = ""
-        st.session_state.selected_url = ""
         st.rerun()
 
 
@@ -64,33 +60,25 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT & RECENT URL PICKER
+# ARTICLE INPUT (Restores Native Browser Autocomplete)
 # =====================================================
 
 st.subheader("🔗 Article Input")
 
-# Collect past unique URLs for quick autofill
-past_urls = [item.get("url") for item in reversed(st.session_state.history) if item.get("url")]
-
-# If user has past searches, show a quick autofill picker right above/at the input
-if past_urls:
-    selected_from_dropdown = st.selectbox(
-        "🕒 Recently Searched Links (click to auto-fill):",
-        options=["-- Type or paste a new URL below --"] + past_urls,
-        index=0
+with st.form("news_summary_form"):
+    # Clean input without dynamic session state values so the browser's 
+    # own URL memory/dropdown works naturally when clicked
+    url_input = st.text_input(
+        "Paste News Article URL",
+        placeholder="https://example.com/news/article",
+        key="news_article_url_input",
+        autocomplete="url"
     )
-    if selected_from_dropdown != "-- Type or paste a new URL below --":
-        st.session_state.selected_url = selected_from_dropdown
 
-# Main URL input box
-url_input = st.text_input(
-    "Paste News Article URL",
-    value=st.session_state.selected_url,
-    placeholder="https://example.com/news/article",
-    autocomplete="url"  # Triggers browser autofill popup
-)
-
-submitted = st.button("🚀 Generate Summary", use_container_width=True)
+    submitted = st.form_submit_button(
+        "🚀 Generate Summary",
+        use_container_width=True
+    )
 
 
 # =====================================================
@@ -115,9 +103,7 @@ if submitted:
 
     if cached_entry and cached_entry.get("summary"):
         st.session_state.current_summary = cached_entry.get("summary", "")
-        st.session_state.selected_url = cleaned_url
         st.info("⚡ Loaded summary from recent history.")
-        st.rerun()
     else:
         # Extract article text
         extraction_start = time.perf_counter()
@@ -166,8 +152,6 @@ if submitted:
             })
 
             st.session_state.current_summary = complete_summary
-            st.session_state.selected_url = cleaned_url
-            st.rerun()
 
         except Exception as e:
             st.error("❌ Failed to generate the summary.")
