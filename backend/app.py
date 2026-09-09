@@ -23,9 +23,15 @@ st.set_page_config(
 if "history" not in st.session_state:
     st.session_state.history = []
 
+if "latest_summary" not in st.session_state:
+    st.session_state.latest_summary = ""
+
+if "latest_time" not in st.session_state:
+    st.session_state.latest_time = None
+
 
 # =====================================================
-# SIDEBAR
+# SIDEBAR (HISTORY)
 # =====================================================
 
 with st.sidebar:
@@ -35,7 +41,11 @@ with st.sidebar:
 
     if st.session_state.history:
         for i, item in enumerate(reversed(st.session_state.history)):
-            st.markdown(f"**{i + 1}. {item['title'][:50]}**")
+            # Clean headline fallback for history
+            display_title = item["title"].replace("*", "").replace("-", "").strip()
+            if not display_title:
+                display_title = item["url"]
+            st.markdown(f"**{i + 1}.** [{display_title[:45]}...]({item['url']})")
     else:
         st.info("No summaries generated yet.")
 
@@ -43,6 +53,8 @@ with st.sidebar:
 
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
+        st.session_state.latest_summary = ""
+        st.session_state.latest_time = None
         st.rerun()
 
 
@@ -80,18 +92,15 @@ with st.form("news_summary_form"):
 if submitted:
     cleaned_url = url.strip()
 
-    # 1. Validate empty URL
     if not cleaned_url:
         st.warning("⚠️ Please paste a news article URL.")
         st.stop()
 
-    # 2. Automatically add https:// if omitted
     if not cleaned_url.startswith(("http://", "https://")):
         cleaned_url = "https://" + cleaned_url
 
-    # 3. Extract Article Text
+    # 1. Extraction
     extraction_start = time.perf_counter()
-
     with st.spinner("🔎 Extracting article..."):
         try:
             article_text = extract_article(cleaned_url)
@@ -100,13 +109,9 @@ if submitted:
 
     extraction_time = time.perf_counter() - extraction_start
 
-    # 4. Check extraction result
     if not article_text:
         st.error("❌ Unable to extract the article from this website.")
-        st.info(
-            "The publisher may be blocking automated scrapers with a bot-wall or paywall. "
-            "Please try another article link."
-        )
+        st.info("The publisher may be blocking automated scrapers. Please try another link.")
         st.stop()
 
     if len(article_text.strip()) < 300:
@@ -115,11 +120,8 @@ if submitted:
 
     st.success(f"✓ Article extracted successfully in {extraction_time:.2f} seconds")
 
-    # =================================================
-    # GENERATE SUMMARY (GROQ)
-    # =================================================
+    # 2. Summary Generation
     st.subheader("✨ Summary")
-
     summary_placeholder = st.empty()
     complete_summary = ""
     summary_start = time.perf_counter()
@@ -131,7 +133,19 @@ if submitted:
                 summary_placeholder.markdown(complete_summary)
 
         summary_time = time.perf_counter() - summary_start
-        st.success(f"✓ Summary generated in {summary_time:.2f} seconds")
+
+        # Store in session state
+        st.session_state.latest_summary = complete_summary
+        st.session_state.latest_time = summary_time
+
+        # Save to history immediately
+        st.session_state.history.append({
+            "title": complete_summary.strip().split("\n")[0][:60],
+            "url": cleaned_url
+        })
+
+        # Instant rerun so the sidebar history refreshes immediately
+        st.rerun()
 
     except Exception as e:
         st.error("❌ Failed to generate the summary.")
@@ -139,19 +153,22 @@ if submitted:
         st.info("Please verify your GROQ_API_KEY inside `.streamlit/secrets.toml`.")
         st.stop()
 
-    # =================================================
-    # DOWNLOAD & SAVE
-    # =================================================
-    if complete_summary.strip():
-        st.download_button(
-            label="⬇️ Download Summary",
-            data=complete_summary,
-            file_name="news_summary.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
 
-        st.session_state.history.append({
-            "title": complete_summary[:80],
-            "url": cleaned_url
-        })
+# =====================================================
+# DISPLAY CURRENT / LAST GENERATED SUMMARY
+# =====================================================
+
+if st.session_state.latest_summary and not submitted:
+    st.subheader("✨ Summary")
+    st.markdown(st.session_state.latest_summary)
+
+    if st.session_state.latest_time:
+        st.success(f"✓ Summary generated in {st.session_state.latest_time:.2f} seconds")
+
+    st.download_button(
+        label="⬇️ Download Summary",
+        data=st.session_state.latest_summary,
+        file_name="news_summary.txt",
+        mime="text/plain",
+        use_container_width=True
+    )
