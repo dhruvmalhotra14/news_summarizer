@@ -51,53 +51,44 @@ with st.sidebar:
 # =====================================================
 
 st.title("📰 News Summarizer")
-st.markdown("Enter a news article URL or paste the raw article text to generate a concise summary.")
+st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT TABS
+# ARTICLE INPUT
 # =====================================================
 
-st.subheader("📥 Article Input")
+st.subheader("🔗 Article Input")
 
-tab_url, tab_text = st.tabs(["🔗 Summarize via URL", "📝 Paste Article Text"])
+with st.form("news_summary_form"):
+    url = st.text_input(
+        "Paste News Article URL",
+        placeholder="https://indianexpress.com/... or https://reuters.com/...",
+        label_visibility="visible"
+    )
 
-with tab_url:
-    with st.form("news_url_form"):
-        url_input = st.text_input(
-            "News Article URL",
-            placeholder="https://indianexpress.com/article/... or https://reuters.com/...",
-            label_visibility="collapsed"
-        )
-        submit_url = st.form_submit_button("🚀 Summarize from URL", use_container_width=True)
-
-with tab_text:
-    with st.form("news_raw_text_form"):
-        raw_text_input = st.text_area(
-            "Paste full article text here",
-            height=200,
-            placeholder="Paste article body here (especially for subscriber-only or paywalled articles)...",
-            label_visibility="collapsed"
-        )
-        submit_text = st.form_submit_button("🚀 Summarize Pasted Text", use_container_width=True)
+    submitted = st.form_submit_button(
+        "🚀 Generate Summary",
+        use_container_width=True
+    )
 
 
 # =====================================================
 # PROCESS ARTICLE
 # =====================================================
 
-article_text = None
-source_title = ""
+if submitted:
+    cleaned_url = url.strip()
 
-# --- Flow 1: URL Submission ---
-if submit_url:
-    cleaned_url = url_input.strip()
+    # 1. Validate URL
     if not cleaned_url:
-        st.warning("⚠️ Please paste a valid news article URL.")
+        st.warning("⚠️ Please paste a news article URL.")
         st.stop()
 
+    # 2. Extract Article Text
     extraction_start = time.perf_counter()
-    with st.spinner("🔎 Extracting article content..."):
+
+    with st.spinner("🔎 Extracting article..."):
         try:
             article_text = extract_article(cleaned_url)
         except Exception:
@@ -105,50 +96,32 @@ if submit_url:
 
     extraction_time = time.perf_counter() - extraction_start
 
+    # 3. Check if extraction succeeded
     if not article_text:
         st.error("❌ Unable to extract the article from this website.")
         st.info(
-            "The publisher is likely blocking scraping requests (403 Forbidden or Bot Wall). "
-            "💡 **Workaround:** Copy the text from your browser and switch to the **'📝 Paste Article Text'** tab above."
+            "The publisher may be blocking automated scrapers with a bot-wall or paywall. "
+            "Please try another article link."
         )
         st.stop()
 
-    st.success(f"✓ Article extracted successfully in {extraction_time:.2f} seconds")
-    source_title = cleaned_url
-
-# --- Flow 2: Raw Text Submission ---
-elif submit_text:
-    cleaned_text = raw_text_input.strip()
-    if not cleaned_text:
-        st.warning("⚠️ Please paste some article text to summarize.")
-        st.stop()
-
-    article_text = cleaned_text
-    source_title = "Pasted Text Article"
-
-
-# =====================================================
-# GENERATION & OUTPUT
-# =====================================================
-
-if article_text:
-    # -------------------------------------------------
-    # Check Minimum Length
-    # -------------------------------------------------
     if len(article_text.strip()) < 300:
-        st.error("❌ The article text is too short (less than 300 characters) to generate a reliable summary.")
+        st.error("❌ The extracted article text is too short to generate a reliable summary.")
         st.stop()
 
-    # -------------------------------------------------
-    # Generate Summary via Groq
-    # -------------------------------------------------
+    st.success(f"✓ Article extracted successfully in {extraction_time:.2f} seconds")
+
+    # =================================================
+    # GENERATE SUMMARY (GROQ)
+    # =================================================
     st.subheader("✨ Summary")
+
     summary_placeholder = st.empty()
     complete_summary = ""
     summary_start = time.perf_counter()
 
     try:
-        with st.spinner("🤖 Generating summary with Groq..."):
+        with st.spinner("🤖 Generating summary..."):
             for chunk in generate_summary(article_text):
                 complete_summary += chunk
                 summary_placeholder.markdown(complete_summary)
@@ -159,12 +132,12 @@ if article_text:
     except Exception as e:
         st.error("❌ Failed to generate the summary.")
         st.caption(f"Error: {e}")
-        st.info("Please verify your `GROQ_API_KEY` in your Streamlit secrets settings.")
+        st.info("Please verify your GROQ_API_KEY inside `.streamlit/secrets.toml`.")
         st.stop()
 
-    # -------------------------------------------------
-    # Download Button & History
-    # -------------------------------------------------
+    # =================================================
+    # DOWNLOAD & SAVE
+    # =================================================
     if complete_summary.strip():
         st.download_button(
             label="⬇️ Download Summary",
@@ -176,5 +149,5 @@ if article_text:
 
         st.session_state.history.append({
             "title": complete_summary[:80],
-            "url": source_title
+            "url": cleaned_url
         })
