@@ -58,11 +58,11 @@ User enters news URL (or clicks autofill history)
                     ↓
       Display, Sidebar Log & Download
 
-👨‍💻 Author
+### 👨‍💻 Author
 
-**Dhruv Malhotra**  
+Dhruv Malhotra  
 GitHub: [@dhruvmalhotra14](https://github.com/dhruvmalhotra14)
 
+---
 
-
-⭐ **Found this helpful?** If you like this project, please consider giving it a star on GitHub—it helps support future updates!
+⭐ If you find this project useful, consider giving it a star!
