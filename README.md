@@ -57,6 +57,8 @@ User enters news URL (or clicks autofill history)
         Streamed Concise Summary
                     ↓
       Display, Sidebar Log & Download
+---
+
 ## 👨‍💻 Author
 
 ### Dhruv Malhotra
@@ -70,3 +72,5 @@ https://github.com/dhruvmalhotra14
 ## ⭐ Support
 
 If you like this project, consider giving it a ⭐ on GitHub!
+
+
