@@ -63,7 +63,7 @@ st.subheader("🔗 Article Input")
 with st.form("news_summary_form"):
     url = st.text_input(
         "Paste News Article URL",
-        placeholder="https://indianexpress.com/... or https://reuters.com/...",
+        placeholder="https://example.com/news/article",
         label_visibility="visible"
     )
 
@@ -80,12 +80,16 @@ with st.form("news_summary_form"):
 if submitted:
     cleaned_url = url.strip()
 
-    # 1. Validate URL
+    # 1. Validate empty URL
     if not cleaned_url:
         st.warning("⚠️ Please paste a news article URL.")
         st.stop()
 
-    # 2. Extract Article Text
+    # 2. Automatically add https:// if omitted
+    if not cleaned_url.startswith(("http://", "https://")):
+        cleaned_url = "https://" + cleaned_url
+
+    # 3. Extract Article Text
     extraction_start = time.perf_counter()
 
     with st.spinner("🔎 Extracting article..."):
@@ -96,7 +100,7 @@ if submitted:
 
     extraction_time = time.perf_counter() - extraction_start
 
-    # 3. Check if extraction succeeded
+    # 4. Check extraction result
     if not article_text:
         st.error("❌ Unable to extract the article from this website.")
         st.info(
