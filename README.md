@@ -63,6 +63,6 @@ User enters news URL (or clicks autofill history)
 Dhruv Malhotra  
 GitHub: [@dhruvmalhotra14](https://github.com/dhruvmalhotra14)
 
----
+<hr>
 
 ⭐ If you find this project useful, consider giving it a star!
