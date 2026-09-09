@@ -1,7 +1,16 @@
+import json
 import re
 import requests
 import trafilatura
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+
+# TLS fingerprint impersonation to bypass Cloudflare/Akamai
+try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
 
 HEADERS = {
     "User-Agent": (
@@ -9,19 +18,22 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/125.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.google.com/",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
 }
 
-BLOCKED_PHRASES = [
+ERROR_PATTERNS = [
     "403 forbidden",
     "access denied",
     "just a moment...",
     "enable javascript",
-    "robot or human",
+    "verify you are human",
     "cloudflare",
-    "subscribe to read",
+    "subscribe to continue",
+    "please turn javascript on",
 ]
 
 
@@ -31,72 +43,86 @@ def clean_text(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     cleaned = "\n\n".join(lines).strip()
 
-    lower = cleaned.lower()
-    for phrase in BLOCKED_PHRASES:
-        if phrase in lower and len(cleaned) < 500:
+    # Reject if it's merely an anti-bot notice
+    sample = cleaned[:600].lower()
+    for err in ERROR_PATTERNS:
+        if err in sample and len(cleaned) < 800:
             return ""
+
     return cleaned
 
 
-def extract_with_jina(url: str) -> str:
-    """Bypasses Cloudflare/anti-bot protection using Jina proxy."""
+def fetch_html(url: str) -> str:
+    """Fetch HTML with browser TLS fingerprinting."""
     try:
-        jina_url = f"https://r.jina.ai/{url}"
+        if HAS_CURL_CFFI:
+            res = cffi_requests.get(
+                url,
+                headers=HEADERS,
+                impersonate="chrome124",
+                timeout=15
+            )
+            if res.status_code == 200:
+                return res.text
+        else:
+            res = requests.get(url, headers=HEADERS, timeout=15)
+            if res.status_code == 200:
+                return res.text
+    except Exception:
+        pass
+    return ""
+
+
+def extract_from_json_ld(soup: BeautifulSoup) -> str:
+    """
+    Indian Express, NDTV, and Reuters put full articleBody
+    in the JSON-LD script, which bypasses DOM paywalls and layout scripts.
+    """
+    try:
+        scripts = soup.find_all("script", type="application/ld+json")
+        for script in scripts:
+            if not script.string:
+                continue
+            try:
+                data = json.loads(script.string)
+            except Exception:
+                continue
+
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+
+                # Check top-level articleBody
+                body = item.get("articleBody")
+                if body and len(body.strip()) > 300:
+                    return clean_text(body)
+
+                # Check inside @graph (common in WordPress / Indian Express)
+                graph = item.get("@graph", [])
+                if isinstance(graph, list):
+                    for g in graph:
+                        if isinstance(g, dict) and g.get("articleBody"):
+                            body = g.get("articleBody")
+                            if len(body.strip()) > 300:
+                                return clean_text(body)
+    except Exception:
+        pass
+    return ""
+
+
+def extract_with_jina(url: str) -> str:
+    """Bypass using Jina's proxy reader."""
+    try:
         res = requests.get(
-            jina_url,
+            f"https://r.jina.ai/{url}",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            timeout=20,
+            timeout=25,
         )
         if res.status_code == 200:
-            cleaned = clean_text(res.text)
-            if len(cleaned) >= 300:
-                return cleaned
-    except Exception:
-        pass
-    return ""
-
-
-def extract_with_trafilatura(url: str) -> str:
-    """Trafilatura's direct scraper."""
-    try:
-        downloaded = trafilatura.fetch_url(url)
-        if downloaded:
-            text = trafilatura.extract(
-                downloaded,
-                include_comments=False,
-                include_tables=False,
-                favor_precision=True,
-            )
-            if text:
-                cleaned = clean_text(text)
-                if len(cleaned) >= 300:
-                    return cleaned
-    except Exception:
-        pass
-    return ""
-
-
-def extract_with_requests_soup(url: str) -> str:
-    """Fallback manual parser."""
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=12)
-        if res.status_code != 200:
-            return ""
-
-        soup = BeautifulSoup(res.text, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
-            tag.decompose()
-
-        article = soup.find("article")
-        if article:
-            cleaned = clean_text(article.get_text(separator="\n", strip=True))
-            if len(cleaned) >= 300:
-                return cleaned
-
-        paragraphs = [p.get_text(strip=True) for p in soup.find_all("p")]
-        cleaned = clean_text("\n\n".join(paragraphs))
-        if len(cleaned) >= 300:
-            return cleaned
+            text = clean_text(res.text)
+            if len(text) >= 400:
+                return text
     except Exception:
         pass
     return ""
@@ -107,19 +133,41 @@ def extract_article(url: str) -> str | None:
     if not url.startswith(("http://", "https://")):
         return None
 
-    # Step 1: Try Jina Reader (handles Indian Express, Reuters, NDTV bot walls)
-    text = extract_with_jina(url)
-    if text:
-        return text
+    # Step 1: Direct Fetch with Browser TLS Fingerprint
+    html = fetch_html(url)
 
-    # Step 2: Try Trafilatura
-    text = extract_with_trafilatura(url)
-    if text:
-        return text
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
 
-    # Step 3: Try standard BeautifulSoup
-    text = extract_with_requests_soup(url)
-    if text:
-        return text
+        # 1a. Try JSON-LD (most reliable for Indian Express & NDTV)
+        json_text = extract_from_json_ld(soup)
+        if json_text:
+            return json_text
+
+        # 1b. Trafilatura on fetched HTML
+        traf_text = trafilatura.extract(
+            html,
+            include_comments=False,
+            include_tables=False,
+            favor_precision=True
+        )
+        if traf_text:
+            cleaned = clean_text(traf_text)
+            if len(cleaned) >= 400:
+                return cleaned
+
+    # Step 2: Trafilatura direct URL download
+    downloaded = trafilatura.fetch_url(url)
+    if downloaded:
+        direct_text = trafilatura.extract(downloaded)
+        if direct_text:
+            cleaned = clean_text(direct_text)
+            if len(cleaned) >= 400:
+                return cleaned
+
+    # Step 3: Jina Reader Proxy (Bypasses Cloudflare on Reuters)
+    jina_text = extract_with_jina(url)
+    if jina_text:
+        return jina_text
 
     return None
