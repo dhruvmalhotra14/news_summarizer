@@ -175,7 +175,7 @@ if submitted:
         summary_start = time.perf_counter()
 
         try:
-            with st.spinner("🤖 Generating summary..."):
+            with st.spinner("🤖 Generating summary"):
                 for chunk in generate_summary(article_text):
                     complete_summary += chunk
                     summary_placeholder.markdown(complete_summary)
