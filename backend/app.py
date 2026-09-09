@@ -44,13 +44,12 @@ with st.sidebar:
         recent_items = list(reversed(st.session_state.history))[:5]
 
         for i, item in enumerate(recent_items):
-            # Show clickable button for each past article
-            btn_label = f"📌 {item['title'][:40]}..."
+            title = item.get("title") or item.get("url", "Article")
+            btn_label = f"📌 {title[:40]}..."
             if st.button(btn_label, key=f"hist_btn_{i}", use_container_width=True):
-                st.session_state.selected_url = item["url"]
-                st.session_state.current_summary = item["summary"]
+                st.session_state.selected_url = item.get("url", "")
+                st.session_state.current_summary = item.get("summary", "")
                 st.rerun()
-
     else:
         st.info("No recent articles yet.")
 
@@ -105,15 +104,19 @@ if submitted:
     if not cleaned_url.startswith(("http://", "https://")):
         cleaned_url = "https://" + cleaned_url
 
-    # Check if this exact URL was already summarized before
-    cached_entry = next((item for item in st.session_state.history if item["url"] == cleaned_url), None)
+    # Safe check: verifies if URL is cached AND contains a valid summary
+    cached_entry = next(
+        (item for item in st.session_state.history if item.get("url") == cleaned_url),
+        None
+    )
 
-    if cached_entry:
-        st.session_state.current_summary = cached_entry["summary"]
+    if cached_entry and cached_entry.get("summary"):
+        st.session_state.current_summary = cached_entry.get("summary", "")
         st.session_state.selected_url = cleaned_url
         st.info("⚡ Loaded summary from recent history.")
+        st.rerun()
     else:
-        # Extract
+        # Extract article text
         extraction_start = time.perf_counter()
         with st.spinner("🔎 Extracting article..."):
             try:
@@ -134,7 +137,7 @@ if submitted:
 
         st.success(f"✓ Article extracted successfully in {extraction_time:.2f} seconds")
 
-        # Generate summary
+        # Generate summary via Groq
         st.subheader("✨ Summary")
         summary_placeholder = st.empty()
         complete_summary = ""
@@ -149,7 +152,7 @@ if submitted:
             summary_time = time.perf_counter() - summary_start
             st.success(f"✓ Summary generated in {summary_time:.2f} seconds")
 
-            # Extract clean title line
+            # Extract clean first line as headline
             first_line = complete_summary.strip().split("\n")[0].replace("*", "").replace("#", "").strip()
             headline = first_line[:60] if first_line else cleaned_url
 
