@@ -1,6 +1,6 @@
 # 📰 Professional News Summarizer
 
-An AI-powered web application that extracts news articles from URLs and generates concise, structured 5-bullet-point summaries using the Groq API.
+An AI-powered web application that extracts news articles from URLs and generates concise, structured summaries using the Groq API.
 
 ---
 
