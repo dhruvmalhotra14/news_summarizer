@@ -1,5 +1,6 @@
 import time
 import streamlit as st
+import streamlit.components.v1 as components
 
 from extractor import extract_article
 from ai import generate_summary
@@ -60,24 +61,49 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT (Restores Native Browser Autocomplete)
+# ARTICLE INPUT WITH POPUP URL HISTORY
 # =====================================================
 
 st.subheader("🔗 Article Input")
 
 with st.form("news_summary_form"):
-    # Clean input without dynamic session state values so the browser's 
-    # own URL memory/dropdown works naturally when clicked
     url_input = st.text_input(
         "Paste News Article URL",
         placeholder="https://example.com/news/article",
-        key="news_article_url_input",
-        autocomplete="url"
+        key="news_article_url_input"
     )
 
     submitted = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
+    )
+
+# Inject browser datalist so clicking the input box shows your past URLs
+past_unique_urls = list(dict.fromkeys([
+    item.get("url") for item in reversed(st.session_state.history) if item.get("url")
+]))
+
+if past_unique_urls:
+    options_html = "".join([f"<option value='{u}'>" for u in past_unique_urls])
+    components.html(
+        f"""
+        <script>
+        const input = window.parent.document.querySelector('input[aria-label="Paste News Article URL"]');
+        if (input) {{
+            let datalist = window.parent.document.getElementById('recent_urls_list');
+            if (!datalist) {{
+                datalist = window.parent.document.createElement('datalist');
+                datalist.id = 'recent_urls_list';
+                window.parent.document.body.appendChild(datalist);
+            }}
+            datalist.innerHTML = "{options_html}";
+            input.setAttribute('list', 'recent_urls_list');
+            input.setAttribute('autocomplete', 'on');
+        }}
+        </script>
+        """,
+        height=0,
+        width=0,
     )
 
 
@@ -152,6 +178,7 @@ if submitted:
             })
 
             st.session_state.current_summary = complete_summary
+            st.rerun()
 
         except Exception as e:
             st.error("❌ Failed to generate the summary.")
