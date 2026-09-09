@@ -21,7 +21,7 @@ st.set_page_config(
 # =====================================================
 
 if "history" not in st.session_state:
-    st.session_state.history = []  # Stores dicts: {"title": ..., "url": ..., "summary": ...}
+    st.session_state.history = []
 
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = ""
@@ -31,27 +31,20 @@ if "selected_url" not in st.session_state:
 
 
 # =====================================================
-# SIDEBAR: RECENT 5 SEARCHES
+# SIDEBAR
 # =====================================================
 
 with st.sidebar:
     st.title("📰 News Summarizer")
     st.markdown("---")
-    st.subheader("🕒 Recent 5 Articles")
+    st.subheader("Summary History")
 
     if st.session_state.history:
-        # Show last 5 articles in reverse chronological order
-        recent_items = list(reversed(st.session_state.history))[:5]
-
-        for i, item in enumerate(recent_items):
+        for i, item in enumerate(reversed(st.session_state.history)):
             title = item.get("title") or item.get("url", "Article")
-            btn_label = f"📌 {title[:40]}..."
-            if st.button(btn_label, key=f"hist_btn_{i}", use_container_width=True):
-                st.session_state.selected_url = item.get("url", "")
-                st.session_state.current_summary = item.get("summary", "")
-                st.rerun()
+            st.markdown(f"**{i + 1}.** {title[:40]}...")
     else:
-        st.info("No recent articles yet.")
+        st.info("No summaries generated yet.")
 
     st.markdown("---")
 
@@ -71,23 +64,33 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT
+# ARTICLE INPUT & RECENT URL PICKER
 # =====================================================
 
 st.subheader("🔗 Article Input")
 
-with st.form("news_summary_form"):
-    url_input = st.text_input(
-        "Paste News Article URL",
-        value=st.session_state.selected_url,
-        placeholder="https://example.com/news/article",
-        label_visibility="visible"
-    )
+# Collect past unique URLs for quick autofill
+past_urls = [item.get("url") for item in reversed(st.session_state.history) if item.get("url")]
 
-    submitted = st.form_submit_button(
-        "🚀 Generate Summary",
-        use_container_width=True
+# If user has past searches, show a quick autofill picker right above/at the input
+if past_urls:
+    selected_from_dropdown = st.selectbox(
+        "🕒 Recently Searched Links (click to auto-fill):",
+        options=["-- Type or paste a new URL below --"] + past_urls,
+        index=0
     )
+    if selected_from_dropdown != "-- Type or paste a new URL below --":
+        st.session_state.selected_url = selected_from_dropdown
+
+# Main URL input box
+url_input = st.text_input(
+    "Paste News Article URL",
+    value=st.session_state.selected_url,
+    placeholder="https://example.com/news/article",
+    autocomplete="url"  # Triggers browser autofill popup
+)
+
+submitted = st.button("🚀 Generate Summary", use_container_width=True)
 
 
 # =====================================================
@@ -104,7 +107,7 @@ if submitted:
     if not cleaned_url.startswith(("http://", "https://")):
         cleaned_url = "https://" + cleaned_url
 
-    # Safe check: verifies if URL is cached AND contains a valid summary
+    # Check cache
     cached_entry = next(
         (item for item in st.session_state.history if item.get("url") == cleaned_url),
         None
@@ -152,7 +155,6 @@ if submitted:
             summary_time = time.perf_counter() - summary_start
             st.success(f"✓ Summary generated in {summary_time:.2f} seconds")
 
-            # Extract clean first line as headline
             first_line = complete_summary.strip().split("\n")[0].replace("*", "").replace("#", "").strip()
             headline = first_line[:60] if first_line else cleaned_url
 
@@ -165,7 +167,6 @@ if submitted:
 
             st.session_state.current_summary = complete_summary
             st.session_state.selected_url = cleaned_url
-
             st.rerun()
 
         except Exception as e:
