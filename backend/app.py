@@ -122,7 +122,16 @@ if submitted:
         "🔎 Extracting article..."
     ):
 
-        article_text = extract_article(url)
+        try:
+
+            # extract_article() returns ONLY article text
+
+            article_text = extract_article(url)
+
+        except Exception:
+
+            article_text = None
+
 
     extraction_time = (
         time.perf_counter() - extraction_start
@@ -183,6 +192,7 @@ if submitted:
 
     summary_start = time.perf_counter()
 
+
     try:
 
         with st.spinner(
@@ -219,13 +229,17 @@ if submitted:
         )
 
 
-    except Exception:
+    except Exception as e:
 
         st.error(
             "❌ Failed to generate the summary."
         )
 
         st.caption(
+            f"Error: {e}"
+        )
+
+        st.info(
             "Please check your Gemini API configuration."
         )
 

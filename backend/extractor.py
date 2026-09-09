@@ -39,10 +39,175 @@ def clean_text(text):
     return text.strip()
 
 
-def extract_with_requests(url):
-    """Try direct extraction using requests + Trafilatura."""
+def extract_json_ld(soup):
+    """
+    Extract article text from JSON-LD structured data.
+    Some news websites expose articleBody here.
+    """
 
     try:
+        import json
+
+        scripts = soup.find_all(
+            "script",
+            type="application/ld+json"
+        )
+
+        for script in scripts:
+
+            if not script.string:
+                continue
+
+            try:
+                data = json.loads(script.string)
+            except Exception:
+                continue
+
+            items = data if isinstance(data, list) else [data]
+
+            for item in items:
+
+                if not isinstance(item, dict):
+                    continue
+
+                # Direct articleBody
+                article_body = item.get("articleBody")
+
+                if article_body:
+
+                    article_body = clean_text(
+                        article_body
+                    )
+
+                    if len(article_body) >= 500:
+                        return article_body
+
+                # Sometimes JSON-LD contains @graph
+                graph = item.get("@graph", [])
+
+                if isinstance(graph, list):
+
+                    for graph_item in graph:
+
+                        if not isinstance(
+                            graph_item,
+                            dict
+                        ):
+                            continue
+
+                        article_body = graph_item.get(
+                            "articleBody"
+                        )
+
+                        if article_body:
+
+                            article_body = clean_text(
+                                article_body
+                            )
+
+                            if len(article_body) >= 500:
+                                return article_body
+
+    except Exception:
+        pass
+
+    return ""
+
+
+def extract_site_specific(soup, url):
+    """
+    Site-specific extraction for websites
+    that do not work reliably with generic extraction.
+    """
+
+    hostname = urlparse(url).netloc.lower()
+
+    # Remove subdomain
+    hostname = hostname.replace("www.", "")
+
+    # =================================================
+    # NDTV
+    # =================================================
+
+    if "ndtv.com" in hostname:
+
+        selectors = [
+            # Common NDTV article containers
+            "div[class*='sp-cn']",
+            "div[class*='story']",
+            "div[class*='article']",
+            "div[class*='story__content']",
+            "div[class*='article__content']",
+            "div[class*='content']",
+
+            # Generic article
+            "article"
+        ]
+
+        for selector in selectors:
+
+            elements = soup.select(selector)
+
+            for element in elements:
+
+                paragraphs = element.find_all("p")
+
+                text = "\n".join(
+                    p.get_text(
+                        " ",
+                        strip=True
+                    )
+                    for p in paragraphs
+                )
+
+                text = clean_text(text)
+
+                if len(text) >= 500:
+                    return text
+
+    # =================================================
+    # REUTERS
+    # =================================================
+
+    if "reuters.com" in hostname:
+
+        selectors = [
+            "article",
+            "div[data-testid='ArticleBody']",
+            "div[class*='article-body']",
+            "div[class*='ArticleBody']",
+            "div[class*='article-body__content']"
+        ]
+
+        for selector in selectors:
+
+            elements = soup.select(selector)
+
+            for element in elements:
+
+                paragraphs = element.find_all("p")
+
+                text = "\n".join(
+                    p.get_text(
+                        " ",
+                        strip=True
+                    )
+                    for p in paragraphs
+                )
+
+                text = clean_text(text)
+
+                if len(text) >= 500:
+                    return text
+
+    return ""
+
+
+def extract_with_requests(url):
+    """Direct extraction using Requests + multiple methods."""
+
+    try:
+
         response = requests.get(
             url,
             headers=HEADERS,
@@ -55,9 +220,26 @@ def extract_with_requests(url):
 
         html = response.text
 
-        # -------------------------------------------------
-        # Try Trafilatura
-        # -------------------------------------------------
+        if not html:
+            return ""
+
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
+
+        # =================================================
+        # METHOD 1: JSON-LD
+        # =================================================
+
+        text = extract_json_ld(soup)
+
+        if text:
+            return text
+
+        # =================================================
+        # METHOD 2: Trafilatura
+        # =================================================
 
         text = trafilatura.extract(
             html,
@@ -75,16 +257,22 @@ def extract_with_requests(url):
             if len(text) >= 500:
                 return text
 
-        # -------------------------------------------------
-        # BeautifulSoup fallback
-        # -------------------------------------------------
+        # =================================================
+        # METHOD 3: Site-specific extraction
+        # =================================================
 
-        soup = BeautifulSoup(
-            html,
-            "html.parser"
+        text = extract_site_specific(
+            soup,
+            url
         )
 
+        if text:
+            return text
+
+        # =================================================
         # Remove unwanted elements
+        # =================================================
+
         for element in soup([
             "script",
             "style",
@@ -95,11 +283,12 @@ def extract_with_requests(url):
             "aside",
             "form"
         ]):
+
             element.decompose()
 
-        # -------------------------------------------------
-        # Try article tag
-        # -------------------------------------------------
+        # =================================================
+        # METHOD 4: Article tag
+        # =================================================
 
         article = soup.find("article")
 
@@ -115,9 +304,9 @@ def extract_with_requests(url):
             if len(text) >= 500:
                 return text
 
-        # -------------------------------------------------
-        # Try paragraphs
-        # -------------------------------------------------
+        # =================================================
+        # METHOD 5: Paragraph extraction
+        # =================================================
 
         paragraphs = soup.find_all("p")
 
@@ -143,9 +332,6 @@ def extract_with_requests(url):
 def extract_with_jina(url):
     """
     Fallback extractor using Jina Reader.
-
-    Jina Reader converts a publicly accessible URL
-    into clean, LLM-friendly text.
     """
 
     try:
@@ -184,9 +370,11 @@ def extract_article(url):
 
     Extraction order:
 
-    1. Direct requests + Trafilatura
-    2. BeautifulSoup fallback
-    3. Jina Reader fallback
+    1. JSON-LD
+    2. Trafilatura
+    3. NDTV / Reuters specific extraction
+    4. BeautifulSoup
+    5. Jina Reader
     """
 
     url = url.strip()
@@ -194,9 +382,9 @@ def extract_article(url):
     if not url:
         return None
 
-    # -------------------------------------------------
-    # Basic URL validation
-    # -------------------------------------------------
+    # =================================================
+    # URL VALIDATION
+    # =================================================
 
     parsed = urlparse(url)
 
@@ -206,18 +394,18 @@ def extract_article(url):
     ):
         return None
 
-    # -------------------------------------------------
-    # METHOD 1: Direct extraction
-    # -------------------------------------------------
+    # =================================================
+    # METHOD 1-5: DIRECT EXTRACTION
+    # =================================================
 
     text = extract_with_requests(url)
 
     if text:
         return text
 
-    # -------------------------------------------------
-    # METHOD 2: Jina Reader fallback
-    # -------------------------------------------------
+    # =================================================
+    # FINAL FALLBACK: JINA
+    # =================================================
 
     text = extract_with_jina(url)
 
