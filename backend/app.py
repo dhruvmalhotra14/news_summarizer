@@ -29,36 +29,20 @@ if "history" not in st.session_state:
 # =====================================================
 
 with st.sidebar:
-
     st.title("📰 News Summarizer")
-
     st.markdown("---")
-
     st.subheader("Summary History")
 
     if st.session_state.history:
-
-        for i, item in enumerate(
-            reversed(st.session_state.history)
-        ):
-
-            st.markdown(
-                f"**{i + 1}. {item['title'][:50]}**"
-            )
-
+        for i, item in enumerate(reversed(st.session_state.history)):
+            st.markdown(f"**{i + 1}. {item['title'][:50]}**")
     else:
-
         st.info("No summaries generated yet.")
 
     st.markdown("---")
 
-    if st.button(
-        "🗑️ Clear History",
-        use_container_width=True
-    ):
-
+    if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
-
         st.rerun()
 
 
@@ -67,10 +51,7 @@ with st.sidebar:
 # =====================================================
 
 st.title("📰 News Summarizer")
-
-st.markdown(
-    "Enter a news article URL and generate a concise summary."
-)
+st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
@@ -80,7 +61,6 @@ st.markdown(
 st.subheader("🔗 Article Input")
 
 with st.form("news_summary_form"):
-
     url = st.text_input(
         "Paste News Article URL",
         placeholder="https://example.com/news/article",
@@ -102,156 +82,77 @@ if submitted:
     # -------------------------------------------------
     # Validate URL
     # -------------------------------------------------
-
     if not url.strip():
-
-        st.warning(
-            "⚠️ Please paste a news article URL."
-        )
-
+        st.warning("⚠️ Please paste a news article URL.")
         st.stop()
-
 
     # =================================================
     # ARTICLE EXTRACTION
     # =================================================
-
     extraction_start = time.perf_counter()
 
-    with st.spinner(
-        "🔎 Extracting article..."
-    ):
-
+    with st.spinner("🔎 Extracting article..."):
         try:
-
-            # extract_article() returns ONLY article text
-
             article_text = extract_article(url)
-
         except Exception:
-
             article_text = None
 
-
-    extraction_time = (
-        time.perf_counter() - extraction_start
-    )
-
+    extraction_time = time.perf_counter() - extraction_start
 
     # -------------------------------------------------
     # Extraction failed
     # -------------------------------------------------
-
     if not article_text:
-
-        st.error(
-            "❌ Unable to extract the article from this website."
-        )
-
+        st.error("❌ Unable to extract the article from this website.")
         st.info(
-            "The publisher may be blocking automated access "
+            "The publisher may be blocking automated access, using paywalls, "
             "or the page may not contain accessible article text."
         )
-
         st.stop()
-
 
     # -------------------------------------------------
     # Extraction successful
     # -------------------------------------------------
-
-    st.success(
-        f"✓ Article extracted successfully "
-        f"in {extraction_time:.2f} seconds"
-    )
-
+    st.success(f"✓ Article extracted successfully in {extraction_time:.2f} seconds")
 
     # =================================================
     # CHECK ARTICLE LENGTH
     # =================================================
-
     if len(article_text.strip()) < 300:
-
-        st.error(
-            "❌ The extracted article text is too short "
-            "to generate a reliable summary."
-        )
-
+        st.error("❌ The extracted article text is too short to generate a reliable summary.")
         st.stop()
-
 
     # =================================================
     # GENERATE SUMMARY
     # =================================================
-
     st.subheader("✨ Summary")
 
     summary_placeholder = st.empty()
-
     complete_summary = ""
-
     summary_start = time.perf_counter()
 
-
     try:
-
-        with st.spinner(
-            "🤖 Generating summary..."
-        ):
-
-            for chunk in generate_summary(
-                article_text
-            ):
-
+        with st.spinner("🤖 Generating summary with Groq..."):
+            for chunk in generate_summary(article_text):
                 complete_summary += chunk
-
-                summary_placeholder.markdown(
-                    complete_summary
-                )
-
-
-        # ---------------------------------------------
-        # Calculate summary generation time
-        # ---------------------------------------------
-
-        summary_time = (
-            time.perf_counter() - summary_start
-        )
-
+                summary_placeholder.markdown(complete_summary)
 
         # ---------------------------------------------
         # Show generation time
         # ---------------------------------------------
-
-        st.success(
-            f"✓ Summary generated in "
-            f"{summary_time:.2f} seconds"
-        )
-
+        summary_time = time.perf_counter() - summary_start
+        st.success(f"✓ Summary generated in {summary_time:.2f} seconds")
 
     except Exception as e:
-
-        st.error(
-            "❌ Failed to generate the summary."
-        )
-
-        st.caption(
-            f"Error: {e}"
-        )
-
-        st.info(
-            "Please check your Gemini API configuration."
-        )
-
+        st.error("❌ Failed to generate the summary.")
+        st.caption(f"Error: {e}")
+        st.info("Please verify your GROQ_API_KEY inside `.streamlit/secrets.toml`.")
         st.stop()
-
 
     # =================================================
     # DOWNLOAD SUMMARY
     # =================================================
-
     if complete_summary.strip():
-
         st.download_button(
             label="⬇️ Download Summary",
             data=complete_summary,
@@ -260,14 +161,10 @@ if submitted:
             use_container_width=True
         )
 
-
         # =================================================
         # SAVE HISTORY
         # =================================================
-
-        st.session_state.history.append(
-            {
-                "title": complete_summary[:80],
-                "url": url
-            }
-        )
+        st.session_state.history.append({
+            "title": complete_summary[:80],
+            "url": url
+        })
