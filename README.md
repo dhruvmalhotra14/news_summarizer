@@ -57,7 +57,7 @@ User enters news URL (or clicks autofill history)
         Streamed Concise Summary
                     ↓
       Display, Sidebar Log & Download
-<hr>
+---
 
 ## 👨‍💻 Author
 
