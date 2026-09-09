@@ -1,34 +1,29 @@
-from google import genai
-from google.genai import types
 import streamlit as st
-
+from groq import Groq
 from prompt import summary_prompt
 
 
-def generate_summary(article_text):
+def generate_summary(article_text: str):
+    api_key = st.secrets.get("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not found in Streamlit secrets.")
 
-    api_key = st.secrets["GEMINI_API_KEY"]
+    client = Groq(api_key=api_key)
 
-    client = genai.Client(
-        api_key=api_key
+    # Trim to 4,000 characters to keep prompt compact and fast
+    trimmed_article = article_text[:4000]
+    prompt = summary_prompt(trimmed_article)
+
+    # Streaming completion via Groq (llama-3.3-70b-versatile or llama-3.1-8b-instant)
+    stream = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        stream=True,
     )
 
-    # Keep enough article content for a good summary
-    article_text = article_text[:3000]
-
-    prompt = summary_prompt(article_text)
-
-    response = client.models.generate_content_stream(
-        model="gemini-3.6-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(
-                thinking_level="minimal"
-            )
-        )
-    )
-
-    for chunk in response:
-
-        if chunk.text:
-            yield chunk.text
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
