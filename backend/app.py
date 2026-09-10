@@ -26,6 +26,9 @@ if "history" not in st.session_state:
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = ""
 
+if "current_url" not in st.session_state:
+    st.session_state.current_url = ""
+
 
 # =====================================================
 # SIDEBAR
@@ -48,6 +51,7 @@ with st.sidebar:
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
         st.session_state.current_summary = ""
+        st.session_state.current_url = ""
         st.rerun()
 
 
@@ -65,12 +69,12 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 st.subheader("🔗 Article Input")
 
-with st.form("news_summary_form", clear_on_submit=True):
+with st.form("news_summary_form", clear_on_submit=False):
     url_input = st.text_input(
         "Paste News Article URL",
+        value=st.session_state.current_url,
         placeholder="https://example.com/news/article",
-        autocomplete="url",
-        key="news_input_field"
+        autocomplete="url"
     )
 
     submitted = st.form_submit_button(
@@ -92,6 +96,9 @@ if submitted:
 
     if not cleaned_url.startswith(("http://", "https://")):
         cleaned_url = "https://" + cleaned_url
+
+    # Retain the entered URL in session state
+    st.session_state.current_url = cleaned_url
 
     # Check cache
     cached_entry = next(
