@@ -1,6 +1,5 @@
 import time
 import streamlit as st
-import streamlit.components.v1 as components
 
 from extractor import extract_article
 from ai import generate_summary
@@ -14,22 +13,6 @@ st.set_page_config(
     page_title="News Summarizer",
     page_icon="📰",
     layout="wide"
-)
-
-# Hide the black datalist arrow icon from the input box
-st.markdown(
-    """
-    <style>
-    /* Removes the small dropdown/calendar-picker arrow from input fields */
-    input::-webkit-calendar-picker-indicator {
-        display: none !important;
-        opacity: 0 !important;
-        -webkit-appearance: none !important;
-        width: 0 !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
 )
 
 
@@ -56,7 +39,7 @@ with st.sidebar:
     if st.session_state.history:
         for i, item in enumerate(reversed(st.session_state.history)):
             title = item.get("title") or item.get("url", "Article")
-            st.markdown(f"**{i + 1}.** {title[:40]}...")
+            st.markdown(f"**{i + 1}.** {title}")
     else:
         st.info("No summaries generated yet.")
 
@@ -77,49 +60,20 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT WITH POPUP URL HISTORY
+# ARTICLE INPUT (Clean, No Forced Popup Box)
 # =====================================================
 
 st.subheader("🔗 Article Input")
 
-with st.form("news_summary_form"):
+with st.form("news_summary_form", clear_on_submit=False):
     url_input = st.text_input(
         "Paste News Article URL",
-        placeholder="https://example.com/news/article",
-        key="news_article_url_input"
+        placeholder="https://example.com/news/article"
     )
 
     submitted = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
-    )
-
-# Inject browser datalist so clicking the input box still shows your past URLs
-past_unique_urls = list(dict.fromkeys([
-    item.get("url") for item in reversed(st.session_state.history) if item.get("url")
-]))
-
-if past_unique_urls:
-    options_html = "".join([f"<option value='{u}'>" for u in past_unique_urls])
-    components.html(
-        f"""
-        <script>
-        const input = window.parent.document.querySelector('input[aria-label="Paste News Article URL"]');
-        if (input) {{
-            let datalist = window.parent.document.getElementById('recent_urls_list');
-            if (!datalist) {{
-                datalist = window.parent.document.createElement('datalist');
-                datalist.id = 'recent_urls_list';
-                window.parent.document.body.appendChild(datalist);
-            }}
-            datalist.innerHTML = "{options_html}";
-            input.setAttribute('list', 'recent_urls_list');
-            input.setAttribute('autocomplete', 'on');
-        }}
-        </script>
-        """,
-        height=0,
-        width=0,
     )
 
 
@@ -149,7 +103,7 @@ if submitted:
     else:
         # Extract article text
         extraction_start = time.perf_counter()
-        with st.spinner("🔎 Extracting article..."):
+        with st.spinner("🔎 Extracting article"):
             try:
                 article_text = extract_article(cleaned_url)
             except Exception:
@@ -168,7 +122,7 @@ if submitted:
 
         st.success(f"✓ Article extracted successfully in {extraction_time:.2f} seconds")
 
-        # Generate summary via Groq
+        # Generate summary
         st.subheader("✨ Summary")
         summary_placeholder = st.empty()
         complete_summary = ""
@@ -184,7 +138,7 @@ if submitted:
             st.success(f"✓ Summary generated in {summary_time:.2f} seconds")
 
             first_line = complete_summary.strip().split("\n")[0].replace("*", "").replace("#", "").strip()
-            headline = first_line[:60] if first_line else cleaned_url
+            headline = first_line if first_line else cleaned_url
 
             # Store in session state history
             st.session_state.history.append({
