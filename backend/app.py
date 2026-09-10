@@ -60,15 +60,17 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT (Clean, No Forced Popup Box)
+# ARTICLE INPUT
 # =====================================================
 
 st.subheader("🔗 Article Input")
 
-with st.form("news_summary_form", clear_on_submit=False):
+with st.form("news_summary_form", clear_on_submit=True):
     url_input = st.text_input(
         "Paste News Article URL",
-        placeholder="https://example.com/news/article"
+        placeholder="https://example.com/news/article",
+        autocomplete="url",
+        key="news_input_field"
     )
 
     submitted = st.form_submit_button(
@@ -100,6 +102,7 @@ if submitted:
     if cached_entry and cached_entry.get("summary"):
         st.session_state.current_summary = cached_entry.get("summary", "")
         st.info("⚡ Loaded summary from recent history.")
+        st.rerun()
     else:
         # Extract article text
         extraction_start = time.perf_counter()
