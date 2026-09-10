@@ -1,6 +1,5 @@
 import time
 import streamlit as st
-import streamlit.components.v1 as components
 
 from extractor import extract_article
 from ai import generate_summary
@@ -16,21 +15,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Hide datalist picker arrow indicator
-st.markdown(
-    """
-    <style>
-    input::-webkit-calendar-picker-indicator {
-        display: none !important;
-        opacity: 0 !important;
-        -webkit-appearance: none !important;
-        width: 0 !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 
 # =====================================================
 # SESSION STATE INITIALIZATION
@@ -41,9 +25,6 @@ if "history" not in st.session_state:
 
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = ""
-
-if "current_url" not in st.session_state:
-    st.session_state.current_url = ""
 
 
 # =====================================================
@@ -67,7 +48,6 @@ with st.sidebar:
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
         st.session_state.current_summary = ""
-        st.session_state.current_url = ""
         st.rerun()
 
 
@@ -80,7 +60,7 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT WITH RE-ATTACHING AUTOCOMPLETE
+# ARTICLE INPUT (Clean, No Forced Popup Box)
 # =====================================================
 
 st.subheader("🔗 Article Input")
@@ -88,52 +68,12 @@ st.subheader("🔗 Article Input")
 with st.form("news_summary_form", clear_on_submit=False):
     url_input = st.text_input(
         "Paste News Article URL",
-        value=st.session_state.current_url,
         placeholder="https://example.com/news/article"
     )
 
     submitted = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
-    )
-
-# Get unique URLs in reverse order
-past_unique_urls = list(dict.fromkeys([
-    item.get("url") for item in reversed(st.session_state.history) if item.get("url")
-]))
-
-if past_unique_urls:
-    options_html = "".join([f"<option value='{u}'>" for u in past_unique_urls])
-    components.html(
-        f"""
-        <script>
-        function attachDatalist() {{
-            const doc = window.parent.document;
-            const input = doc.querySelector('input[aria-label="Paste News Article URL"]');
-            
-            if (input) {{
-                let datalist = doc.getElementById('recent_urls_list');
-                if (!datalist) {{
-                    datalist = doc.createElement('datalist');
-                    datalist.id = 'recent_urls_list';
-                    doc.body.appendChild(datalist);
-                }}
-                datalist.innerHTML = "{options_html}";
-                
-                if (input.getAttribute('list') !== 'recent_urls_list') {{
-                    input.setAttribute('list', 'recent_urls_list');
-                }}
-            }}
-        }}
-
-        attachDatalist();
-        const parentDoc = window.parent.document;
-        parentDoc.addEventListener('focusin', attachDatalist);
-        parentDoc.addEventListener('click', attachDatalist);
-        </script>
-        """,
-        height=0,
-        width=0,
     )
 
 
@@ -151,8 +91,6 @@ if submitted:
     if not cleaned_url.startswith(("http://", "https://")):
         cleaned_url = "https://" + cleaned_url
 
-    st.session_state.current_url = cleaned_url
-
     # Check cache
     cached_entry = next(
         (item for item in st.session_state.history if item.get("url") == cleaned_url),
@@ -162,7 +100,6 @@ if submitted:
     if cached_entry and cached_entry.get("summary"):
         st.session_state.current_summary = cached_entry.get("summary", "")
         st.info("⚡ Loaded summary from recent history.")
-        st.rerun()
     else:
         # Extract article text
         extraction_start = time.perf_counter()
