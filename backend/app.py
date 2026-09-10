@@ -1,5 +1,6 @@
 import time
 import streamlit as st
+import streamlit.components.v1 as components
 
 from extractor import extract_article
 from ai import generate_summary
@@ -13,6 +14,21 @@ st.set_page_config(
     page_title="News Summarizer",
     page_icon="📰",
     layout="wide"
+)
+
+# Hide datalist picker arrow so it looks like a clean, native input
+st.markdown(
+    """
+    <style>
+    input::-webkit-calendar-picker-indicator {
+        display: none !important;
+        opacity: 0 !important;
+        -webkit-appearance: none !important;
+        width: 0 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
 
@@ -64,7 +80,7 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT
+# ARTICLE INPUT WITH HISTORY AUTOCOMPLETE
 # =====================================================
 
 st.subheader("🔗 Article Input")
@@ -73,13 +89,40 @@ with st.form("news_summary_form", clear_on_submit=False):
     url_input = st.text_input(
         "Paste News Article URL",
         value=st.session_state.current_url,
-        placeholder="https://example.com/news/article",
-        autocomplete="url"
+        placeholder="https://example.com/news/article"
     )
 
     submitted = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
+    )
+
+# Attach browser dropdown list containing your previously entered URLs
+past_unique_urls = list(dict.fromkeys([
+    item.get("url") for item in reversed(st.session_state.history) if item.get("url")
+]))
+
+if past_unique_urls:
+    options_html = "".join([f"<option value='{u}'>" for u in past_unique_urls])
+    components.html(
+        f"""
+        <script>
+        const input = window.parent.document.querySelector('input[aria-label="Paste News Article URL"]');
+        if (input) {{
+            let datalist = window.parent.document.getElementById('recent_urls_list');
+            if (!datalist) {{
+                datalist = window.parent.document.createElement('datalist');
+                datalist.id = 'recent_urls_list';
+                window.parent.document.body.appendChild(datalist);
+            }}
+            datalist.innerHTML = "{options_html}";
+            input.setAttribute('list', 'recent_urls_list');
+            input.setAttribute('autocomplete', 'off');
+        }}
+        </script>
+        """,
+        height=0,
+        width=0,
     )
 
 
@@ -97,7 +140,6 @@ if submitted:
     if not cleaned_url.startswith(("http://", "https://")):
         cleaned_url = "https://" + cleaned_url
 
-    # Retain the entered URL in session state
     st.session_state.current_url = cleaned_url
 
     # Check cache
