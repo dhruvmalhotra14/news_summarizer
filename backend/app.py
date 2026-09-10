@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Hide datalist picker arrow so it looks like a clean, native input
+# Hide datalist picker arrow indicator
 st.markdown(
     """
     <style>
@@ -80,7 +80,7 @@ st.markdown("Enter a news article URL and generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT WITH HISTORY AUTOCOMPLETE
+# ARTICLE INPUT WITH RE-ATTACHING AUTOCOMPLETE
 # =====================================================
 
 st.subheader("🔗 Article Input")
@@ -97,7 +97,7 @@ with st.form("news_summary_form", clear_on_submit=False):
         use_container_width=True
     )
 
-# Attach browser dropdown list containing your previously entered URLs
+# Get unique URLs in reverse order
 past_unique_urls = list(dict.fromkeys([
     item.get("url") for item in reversed(st.session_state.history) if item.get("url")
 ]))
@@ -107,18 +107,29 @@ if past_unique_urls:
     components.html(
         f"""
         <script>
-        const input = window.parent.document.querySelector('input[aria-label="Paste News Article URL"]');
-        if (input) {{
-            let datalist = window.parent.document.getElementById('recent_urls_list');
-            if (!datalist) {{
-                datalist = window.parent.document.createElement('datalist');
-                datalist.id = 'recent_urls_list';
-                window.parent.document.body.appendChild(datalist);
+        function attachDatalist() {{
+            const doc = window.parent.document;
+            const input = doc.querySelector('input[aria-label="Paste News Article URL"]');
+            
+            if (input) {{
+                let datalist = doc.getElementById('recent_urls_list');
+                if (!datalist) {{
+                    datalist = doc.createElement('datalist');
+                    datalist.id = 'recent_urls_list';
+                    doc.body.appendChild(datalist);
+                }}
+                datalist.innerHTML = "{options_html}";
+                
+                if (input.getAttribute('list') !== 'recent_urls_list') {{
+                    input.setAttribute('list', 'recent_urls_list');
+                }}
             }}
-            datalist.innerHTML = "{options_html}";
-            input.setAttribute('list', 'recent_urls_list');
-            input.setAttribute('autocomplete', 'off');
         }}
+
+        attachDatalist();
+        const parentDoc = window.parent.document;
+        parentDoc.addEventListener('focusin', attachDatalist);
+        parentDoc.addEventListener('click', attachDatalist);
         </script>
         """,
         height=0,
