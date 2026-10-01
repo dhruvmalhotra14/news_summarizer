@@ -102,45 +102,39 @@ def _parse_html_payload(html: str) -> str:
     return ""
 
 
-def _fetch_indian_express_api(url: str) -> str:
-    """
-    Directly extracts Indian Express articles via WordPress REST API & Lite feeds,
-    bypassing Cloudflare and CloudFront HTML firewalls entirely.
-    """
-    clean_target = url.split("?")[0].rstrip("/")
-    slug_match = re.search(r"/([^/]+)-(\d+)/?$", clean_target)
-    
-    # 1. Try WP REST API by post ID
-    if slug_match:
-        post_id = slug_match.group(2)
-        api_url = f"https://indianexpress.com/wp-json/wp/v2/posts/{post_id}"
-        try:
-            resp = curl_requests.get(
-                api_url,
-                impersonate="chrome120",
-                timeout=8,
-                headers={"Accept": "application/json"}
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                raw_html = data.get("content", {}).get("rendered", "")
-                if raw_html:
-                    soup = BeautifulSoup(raw_html, "html.parser")
-                    paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) > 30]
-                    if paragraphs:
-                        return _clean_text("\n\n".join(paragraphs))
-        except Exception:
-            pass
+def _fetch_via_google_transcoder(url: str) -> str:
+    """Uses Google's text transcoding service which CloudFront does not block."""
+    try:
+        encoded = urllib.parse.quote(url)
+        transcoder_url = f"https://www.google.com/search?q={encoded}&btnI=1"
+        resp = curl_requests.get(
+            transcoder_url,
+            impersonate="chrome120",
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"}
+        )
+        if resp.status_code == 200:
+            extracted = _parse_html_payload(resp.text)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
+    return ""
 
-    # 2. Try Mobile Lite endpoint
-    lite_url = f"{clean_target}/lite/"
+
+def _fetch_indian_express_amp(url: str) -> str:
+    """Fetches Google's cached AMP document for the Indian Express story."""
+    clean_target = url.split("?")[0].rstrip("/")
+    domain_path = clean_target.replace("https://", "").replace("http://", "")
+    amp_cache_url = f"https://indianexpress-com.cdn.ampproject.org/v/s/{domain_path}?amp_js_v=0.1"
+
     try:
         resp = curl_requests.get(
-            lite_url,
+            amp_cache_url,
             impersonate="chrome120",
-            timeout=8,
+            timeout=10,
             headers={
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
                 "Referer": "https://www.google.com/"
             }
         )
@@ -150,33 +144,22 @@ def _fetch_indian_express_api(url: str) -> str:
                 return extracted
     except Exception:
         pass
-
-    # 3. External API Relay
-    try:
-        relay_url = f"https://r.jina.ai/{clean_target}"
-        resp = curl_requests.get(
-            relay_url,
-            headers={"x-return-format": "text"},
-            timeout=10
-        )
-        if resp.status_code == 200 and not _is_error_payload(resp.text):
-            return _clean_text(resp.text)
-    except Exception:
-        pass
-
     return ""
 
 
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Priority bypass for Indian Express
+    # Special handling for Indian Express
     if "indianexpress.com" in clean_url:
-        ie_text = _fetch_indian_express_api(clean_url)
-        if ie_text:
-            return ie_text
+        text = _fetch_indian_express_amp(clean_url)
+        if text:
+            return text
+        text = _fetch_via_google_transcoder(clean_url)
+        if text:
+            return text
 
-    # Standard direct fetch (works for The Hindu, NDTV, BBC, CNN, TOI)
+    # Standard direct fetch for all other sites
     try:
         resp = curl_requests.get(
             clean_url,
@@ -203,5 +186,10 @@ def extract_article(url: str) -> str:
                 return extracted
     except Exception:
         pass
+
+    # Final attempt via Google Transcoder for any remaining blocked sites
+    fallback_text = _fetch_via_google_transcoder(clean_url)
+    if fallback_text:
+        return fallback_text
 
     return ""
