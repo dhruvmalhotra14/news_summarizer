@@ -6,7 +6,7 @@ from curl_cffi import requests as curl_requests
 
 
 def _clean_text(text: str) -> str:
-    """Removes excessive whitespace and unwanted boilerplate lines."""
+    """Removes excessive newlines and whitespace."""
     if not text:
         return ""
     text = re.sub(r"\n\s*\n+", "\n\n", text)
@@ -14,7 +14,7 @@ def _clean_text(text: str) -> str:
 
 
 def _extract_json_ld(soup: BeautifulSoup) -> str:
-    """Extracts clean article body directly from schema script tags."""
+    """Extracts article body directly from JSON-LD schema blocks."""
     for script in soup.find_all("script", type="application/ld+json"):
         if not script.string:
             continue
@@ -34,14 +34,14 @@ def _extract_json_ld(soup: BeautifulSoup) -> str:
 
 
 def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
-    """Fallback extraction targeting core article text nodes."""
+    """Fallback extraction targeting news article body paragraphs."""
     for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
         tag.decompose()
 
     container = soup.find(
         "div",
         class_=re.compile(
-            r"(story-details|full-details|story_details|ie-content|art-content|wp-block-post-content|article-body)",
+            r"(story-details|full-details|story_details|ie-content|art-content|wp-block-post-content|article-body|storycontent)",
             re.IGNORECASE,
         ),
     ) or soup.find(["article", "main"])
@@ -50,115 +50,105 @@ def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
     paragraphs = [
         p.get_text(" ", strip=True)
         for p in target.find_all("p")
-        if len(p.get_text(strip=True)) > 40
-        and not p.get_text(strip=True).startswith(("Also Read", "Click here", "Subscribe", "Explained |"))
+        if len(p.get_text(strip=True)) > 35
+        and not p.get_text(strip=True).startswith(
+            ("Also Read", "Click here", "Subscribe", "Explained |", "Follow us on")
+        )
     ]
 
     return "\n\n".join(paragraphs) if len(paragraphs) >= 2 else ""
 
 
-def _try_fetch(url: str, headers: dict = None) -> str:
-    """Safe helper to fetch text via curl_cffi with Chrome TLS impersonation."""
+def _fetch_page(url: str) -> str:
+    """
+    Tiered fetching strategy:
+    1. Search Engine Crawler Identity (bypasses Indian Express / Cloudflare 403)
+    2. Desktop Chrome 120 TLS fingerprint
+    3. Trafilatura native fetch
+    4. Free public CORS proxy fallback
+    """
+    # Strategy 1: Googlebot Crawler profile (Bypasses Cloudflare on Indian Express & The Hindu)
+    try:
+        resp = curl_requests.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=12,
+            follow_redirects=True,
+        )
+        if resp.status_code == 200 and len(resp.text) > 1200:
+            return resp.text
+    except Exception:
+        pass
+
+    # Strategy 2: Modern Chrome TLS fingerprint
     try:
         resp = curl_requests.get(
             url,
             impersonate="chrome120",
-            timeout=10,
-            headers=headers or {"Referer": "https://www.google.com/"},
+            headers={"Referer": "https://www.google.com/"},
+            timeout=12,
             follow_redirects=True,
         )
-        if resp.status_code == 200 and len(resp.text) > 1000:
+        if resp.status_code == 200 and len(resp.text) > 1200:
             return resp.text
     except Exception:
         pass
+
+    # Strategy 3: Trafilatura fetcher
+    try:
+        downloaded = trafilatura.fetch_url(url)
+        if downloaded and len(downloaded) > 1000:
+            return downloaded
+    except Exception:
+        pass
+
+    # Strategy 4: High-speed proxy fallback
+    try:
+        proxy_url = f"https://api.allorigins.win/raw?url={url}"
+        resp = curl_requests.get(proxy_url, timeout=12)
+        if resp.status_code == 200 and len(resp.text) > 1200:
+            return resp.text
+    except Exception:
+        pass
+
     return ""
 
 
 def extract_article(url: str) -> str:
     """
-    High-resilience extraction pipeline:
-    1. AMP / Lite direct bypass (essential for Indian Express & Paywalled news)
-    2. Direct curl_cffi fetch with browser TLS impersonation
-    3. Trafilatura native fetch
-    4. Jina Markdown Proxy
-    5. r.jina.ai / txtify.it clean text fallbacks
+    Main extraction pipeline:
+    Fetches raw HTML -> JSON-LD schema -> Trafilatura -> DOM BeautifulSoup
     """
     clean_url = url.strip()
-    html_content = ""
+    html_content = _fetch_page(clean_url)
 
-    # Strategy 1: If Indian Express, test the lightweight /lite/ or /amp/ endpoint first
-    if "indianexpress.com" in clean_url:
-        amp_url = clean_url.rstrip("/") + "/lite/"
-        html_content = _try_fetch(amp_url)
-        if not html_content:
-            amp_url_alt = clean_url.rstrip("/") + "/amp/"
-            html_content = _try_fetch(amp_url_alt)
-
-    # Strategy 2: Direct fetch with Google Referer & TLS impersonation
     if not html_content:
-        html_content = _try_fetch(clean_url)
+        return ""
 
-    # Strategy 3: Trafilatura built-in fetcher
-    if not html_content:
-        try:
-            downloaded = trafilatura.fetch_url(clean_url)
-            if downloaded and len(downloaded) > 1000:
-                html_content = downloaded
-        except Exception:
-            pass
+    soup = BeautifulSoup(html_content, "html.parser")
 
-    # Parse HTML if any fetch was successful
-    if html_content:
-        soup = BeautifulSoup(html_content, "html.parser")
+    # 1. JSON-LD schema extraction (purest, fastest)
+    json_ld_text = _extract_json_ld(soup)
+    if json_ld_text and len(json_ld_text) >= 300:
+        return _clean_text(json_ld_text)
 
-        # 1. JSON-LD schema (most accurate)
-        json_ld_text = _extract_json_ld(soup)
-        if json_ld_text and len(json_ld_text) >= 300:
-            return _clean_text(json_ld_text)
+    # 2. Trafilatura precision extraction
+    traf_text = trafilatura.extract(
+        html_content,
+        include_comments=False,
+        include_tables=False,
+        no_fallback=False,
+    )
+    if traf_text and len(traf_text.strip()) >= 300:
+        return _clean_text(traf_text)
 
-        # 2. Trafilatura extraction
-        traf_text = trafilatura.extract(
-            html_content,
-            include_comments=False,
-            include_tables=False,
-            no_fallback=False,
-        )
-        if traf_text and len(traf_text.strip()) >= 300:
-            return _clean_text(traf_text)
-
-        # 3. BeautifulSoup DOM paragraphs
-        dom_text = _extract_soup_paragraphs(soup)
-        if dom_text and len(dom_text.strip()) >= 300:
-            return _clean_text(dom_text)
-
-    # Strategy 4: Proxy Fallback via Jina Reader Engine
-    try:
-        jina_url = f"https://r.jina.ai/{clean_url}"
-        jina_resp = curl_requests.get(
-            jina_url,
-            impersonate="chrome120",
-            timeout=14,
-            headers={
-                "x-return-format": "text",
-                "x-no-cache": "true",
-            },
-        )
-        if jina_resp.status_code == 200:
-            content = jina_resp.text.strip()
-            blocked_markers = ["403 Forbidden", "Access Denied", "Cloudflare", "Robot or human?"]
-            if not any(m.lower() in content.lower() for m in blocked_markers) and len(content) >= 300:
-                return _clean_text(content)
-    except Exception:
-        pass
-
-    # Strategy 5: Proxy Fallback via txtify.it
-    try:
-        stripped_proto = clean_url.replace("https://", "").replace("http://", "")
-        txtify_url = f"https://txtify.it/{stripped_proto}"
-        txt_resp = curl_requests.get(txtify_url, timeout=12)
-        if txt_resp.status_code == 200 and len(txt_resp.text.strip()) >= 300:
-            return _clean_text(txt_resp.text.strip())
-    except Exception:
-        pass
+    # 3. BeautifulSoup DOM paragraphs
+    dom_text = _extract_soup_paragraphs(soup)
+    if dom_text and len(dom_text.strip()) >= 300:
+        return _clean_text(dom_text)
 
     return ""
