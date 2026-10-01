@@ -1,11 +1,13 @@
 import json
 import re
+import urllib.parse
 from bs4 import BeautifulSoup
 import trafilatura
 from curl_cffi import requests as curl_requests
 
 
 def _clean_text(text: str) -> str:
+    """Cleans up raw parsed strings."""
     if not text:
         return ""
     text = re.sub(r"\n\s*\n+", "\n\n", text)
@@ -13,7 +15,7 @@ def _clean_text(text: str) -> str:
 
 
 def _is_error_payload(text: str) -> bool:
-    """Verifies that the extracted content is real article text, not a CDN/WAF error page."""
+    """Verifies that the extracted content is legitimate text and not a WAF block page."""
     if not text or len(text.strip()) < 250:
         return True
     lower = text.lower()
@@ -31,6 +33,7 @@ def _is_error_payload(text: str) -> bool:
 
 
 def _extract_from_json_ld(soup: BeautifulSoup) -> str:
+    """Extracts clean article text from JSON-LD schema (present in standard & AMP pages)."""
     for script in soup.find_all("script", type="application/ld+json"):
         if not script.string:
             continue
@@ -50,6 +53,7 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> str:
 
 
 def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
+    """Extracts article text from paragraph elements."""
     for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
         tag.decompose()
 
@@ -74,6 +78,7 @@ def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
 
 
 def _parse_html_payload(html: str) -> str:
+    """Parses raw HTML across JSON-LD, Trafilatura, and BeautifulSoup."""
     if not html or _is_error_payload(html):
         return ""
 
@@ -102,14 +107,43 @@ def _parse_html_payload(html: str) -> str:
     return ""
 
 
-def _fetch_indian_express_proxy(url: str) -> str:
-    """Special proxy relays to bypass AWS datacenter IP blocks on Indian Express."""
-    clean_url = url.split("?")[0]
+def _fetch_protected_site(url: str) -> str:
+    """Multi-mirror extraction pipeline for AWS-blocked domains like Indian Express."""
+    clean_target = url.split("?")[0]
+    encoded_url = urllib.parse.quote(clean_target, safe="")
+    domain_and_path = clean_target.replace("https://", "").replace("http://", "")
 
-    # Mirror 1: CorsProxy gateway
+    # Mirror 1: Google AMP Cache (Hosted on Google CDN, never blocked by CloudFront)
+    amp_mirrors = [
+        f"https://cdn.ampproject.org/c/s/{domain_and_path}",
+        f"https://indianexpress-com.cdn.ampproject.org/c/s/{domain_and_path}",
+    ]
+    for amp_url in amp_mirrors:
+        try:
+            resp = curl_requests.get(amp_url, impersonate="chrome120", timeout=8)
+            if resp.status_code == 200:
+                extracted = _parse_html_payload(resp.text)
+                if extracted:
+                    return extracted
+        except Exception:
+            pass
+
+    # Mirror 2: AllOrigins JSON Proxy (Fetches off-AWS and returns HTML in JSON)
     try:
-        cors_url = f"https://corsproxy.io/?{clean_url}"
-        resp = curl_requests.get(cors_url, impersonate="chrome120", timeout=12)
+        allorig_url = f"https://api.allorigins.win/get?url={encoded_url}"
+        resp = curl_requests.get(allorig_url, timeout=10)
+        if resp.status_code == 200:
+            payload = resp.json().get("contents", "")
+            extracted = _parse_html_payload(payload)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
+
+    # Mirror 3: CodeTabs Relay
+    try:
+        codetabs_url = f"https://api.codetabs.com/v1/proxy?quest={encoded_url}"
+        resp = curl_requests.get(codetabs_url, timeout=10)
         if resp.status_code == 200:
             extracted = _parse_html_payload(resp.text)
             if extracted:
@@ -117,29 +151,10 @@ def _fetch_indian_express_proxy(url: str) -> str:
     except Exception:
         pass
 
-    # Mirror 2: Jina Reader with raw Bearer auth emulation
+    # Mirror 4: CorsProxy.io
     try:
-        jina_url = f"https://r.jina.ai/{clean_url}"
-        jina_resp = curl_requests.get(
-            jina_url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "x-return-format": "text",
-                "x-no-cache": "true",
-            },
-            timeout=14,
-        )
-        if jina_resp.status_code == 200:
-            content = jina_resp.text.strip()
-            if not _is_error_payload(content):
-                return _clean_text(content)
-    except Exception:
-        pass
-
-    # Mirror 3: AllOrigins raw relay
-    try:
-        allorig_url = f"https://api.allorigins.win/raw?url={clean_url}"
-        resp = curl_requests.get(allorig_url, timeout=12)
+        cors_url = f"https://corsproxy.io/?url={encoded_url}"
+        resp = curl_requests.get(cors_url, impersonate="chrome120", timeout=10)
         if resp.status_code == 200:
             extracted = _parse_html_payload(resp.text)
             if extracted:
@@ -153,13 +168,13 @@ def _fetch_indian_express_proxy(url: str) -> str:
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Priority bypass for Indian Express
+    # If it is Indian Express, use the non-AWS proxy mirrors first
     if "indianexpress.com" in clean_url:
-        ie_text = _fetch_indian_express_proxy(clean_url)
+        ie_text = _fetch_protected_site(clean_url)
         if ie_text:
             return ie_text
 
-    # Standard flow for all other news domains
+    # Standard direct fetch (works for The Hindu, NDTV, BBC, CNN, TOI)
     try:
         resp = curl_requests.get(
             clean_url,
@@ -177,7 +192,7 @@ def extract_article(url: str) -> str:
     except Exception:
         pass
 
-    # Trafilatura fallback
+    # Trafilatura standard fetch
     try:
         html = trafilatura.fetch_url(clean_url)
         if html:
@@ -187,19 +202,9 @@ def extract_article(url: str) -> str:
     except Exception:
         pass
 
-    # Generic Jina fallback
-    try:
-        jina_url = f"https://r.jina.ai/{clean_url}"
-        jina_resp = curl_requests.get(
-            jina_url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=12,
-        )
-        if jina_resp.status_code == 200:
-            content = jina_resp.text.strip()
-            if not _is_error_payload(content):
-                return _clean_text(content)
-    except Exception:
-        pass
+    # Fallback to protected mirrors for any other firewalled site
+    fallback_text = _fetch_protected_site(clean_url)
+    if fallback_text:
+        return fallback_text
 
     return ""
