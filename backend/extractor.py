@@ -2,7 +2,6 @@ import json
 import re
 import urllib.parse
 from bs4 import BeautifulSoup
-import feedparser
 import trafilatura
 from curl_cffi import requests as curl_requests
 
@@ -15,7 +14,7 @@ def _clean_text(text: str) -> str:
 
 
 def _is_error_payload(text: str) -> bool:
-    """Verifies that the content is real article prose and not a WAF error screen."""
+    """Verifies that the content is real article prose and not an error page."""
     if not text or len(text.strip()) < 250:
         return True
     lower = text.lower()
@@ -86,7 +85,7 @@ def _parse_html_payload(html: str) -> str:
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # 1. JSON-LD schema
+    # 1. JSON-LD schema (cleanest)
     json_ld = _extract_from_json_ld(soup)
     if json_ld and not _is_error_payload(json_ld):
         return _clean_text(json_ld)
@@ -109,46 +108,29 @@ def _parse_html_payload(html: str) -> str:
     return ""
 
 
-def _fetch_indian_express_via_feed_and_syndication(url: str) -> str:
+def _fetch_via_google_proxy(url: str) -> str:
     """
-    Indian Express maintains completely unblocked RSS / Mobile syndication
-    feeds that are exempt from Cloudflare Turnstile blocks.
+    Tunnels through Google's translation mirror.
+    CloudFront/Cloudflare will NEVER block Google's crawler IPs,
+    allowing Streamlit Cloud to pull the raw HTML safely.
     """
-    clean_target = url.split("?")[0].rstrip("/")
-    slug_part = clean_target.split("/")[-1]
-
-    # Method 1: Feedparser matching from IE section feeds
-    section = "article"
-    parts = clean_target.split("/")
-    if len(parts) >= 5:
-        section = parts[4]  # e.g., entertainment, opinion, world, india
-
-    rss_urls = [
-        f"https://indianexpress.com/section/{section}/feed/",
-        "https://indianexpress.com/feed/",
-    ]
-
-    for rss in rss_urls:
-        try:
-            feed = feedparser.parse(rss)
-            for entry in feed.entries:
-                if slug_part in entry.link or entry.link.rstrip("/") == clean_target:
-                    content_raw = entry.get("content", [{}])[0].get("value", "") or entry.get("summary", "")
-                    if content_raw:
-                        soup = BeautifulSoup(content_raw, "html.parser")
-                        paragraphs = [p.get_text(strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) > 25]
-                        if paragraphs:
-                            return _clean_text("\n\n".join(paragraphs))
-                        text = soup.get_text(" ", strip=True)
-                        if len(text) > 250:
-                            return _clean_text(text)
-        except Exception:
-            pass
-
-    # Method 2: Google Search text-cache mirror
     try:
-        gcache = f"https://webcache.googleusercontent.com/search?q=cache:{clean_target}&strip=1"
-        resp = curl_requests.get(gcache, timeout=8)
+        clean_url = url.split("?")[0].rstrip("/")
+        # Google Translate unblock proxy format
+        encoded_domain = clean_url.replace("https://", "").replace("http://", "")
+        dash_domain = encoded_domain.replace(".", "-").replace("/", ".")
+        
+        # Method 1: Google Translate Proxy Engine
+        gt_url = f"https://translate.google.com/m?sl=auto&tl=en&u={urllib.parse.quote(clean_url)}"
+        resp = curl_requests.get(
+            gt_url,
+            impersonate="chrome120",
+            timeout=12,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://translate.google.com/",
+            }
+        )
         if resp.status_code == 200:
             extracted = _parse_html_payload(resp.text)
             if extracted:
@@ -156,16 +138,23 @@ def _fetch_indian_express_via_feed_and_syndication(url: str) -> str:
     except Exception:
         pass
 
-    # Method 3: JSON Content Bridge
+    # Method 2: Jina Reader with explicit bypass headers
     try:
-        encoded = urllib.parse.quote(clean_target, safe="")
-        bridge_url = f"https://api.allorigins.win/get?url={encoded}"
-        resp = curl_requests.get(bridge_url, timeout=10)
-        if resp.status_code == 200:
-            payload = resp.json().get("contents", "")
-            extracted = _parse_html_payload(payload)
-            if extracted:
-                return extracted
+        jina_url = f"https://r.jina.ai/{clean_url}"
+        resp = curl_requests.get(
+            jina_url,
+            timeout=12,
+            headers={
+                "x-no-cache": "true",
+                "x-return-format": "markdown",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+        )
+        if resp.status_code == 200 and not _is_error_payload(resp.text):
+            # Strip markdown title headers if needed
+            body = re.sub(r"^Title:.*?\n", "", resp.text, flags=re.MULTILINE)
+            body = re.sub(r"^URL Source:.*?\n", "", body, flags=re.MULTILINE)
+            return _clean_text(body)
     except Exception:
         pass
 
@@ -175,13 +164,13 @@ def _fetch_indian_express_via_feed_and_syndication(url: str) -> str:
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Special unblocked syndication route for Indian Express
+    # If it is Indian Express, immediately route via Google's proxy tunnel
     if "indianexpress.com" in clean_url:
-        ie_text = _fetch_indian_express_via_feed_and_syndication(clean_url)
-        if ie_text:
-            return ie_text
+        text = _fetch_via_google_proxy(clean_url)
+        if text:
+            return text
 
-    # Standard direct fetch for other websites (The Hindu, NDTV, BBC, TOI)
+    # Standard direct fetch for other sites (The Hindu, NDTV, BBC, TOI)
     try:
         resp = curl_requests.get(
             clean_url,
@@ -208,5 +197,10 @@ def extract_article(url: str) -> str:
                 return extracted
     except Exception:
         pass
+
+    # Fallback to Google proxy tunnel for any other domain blocked by CloudFront
+    fallback = _fetch_via_google_proxy(clean_url)
+    if fallback:
+        return fallback
 
     return ""
