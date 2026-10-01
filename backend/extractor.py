@@ -1,20 +1,21 @@
 import json
 import re
+import urllib.parse
 from bs4 import BeautifulSoup
 import trafilatura
 from curl_cffi import requests as curl_requests
 
 
 def _clean_text(text: str) -> str:
-    """Removes excessive newlines and whitespace."""
+    """Cleans up raw parsed strings."""
     if not text:
         return ""
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     return text.strip()
 
 
-def _extract_json_ld(soup: BeautifulSoup) -> str:
-    """Extracts article body directly from JSON-LD schema blocks."""
+def _extract_from_json_ld(soup: BeautifulSoup) -> str:
+    """Attempts to pull articleBody directly from JSON-LD schema blocks."""
     for script in soup.find_all("script", type="application/ld+json"):
         if not script.string:
             continue
@@ -34,7 +35,7 @@ def _extract_json_ld(soup: BeautifulSoup) -> str:
 
 
 def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
-    """Fallback extraction targeting news article body paragraphs."""
+    """Extracts article text from paragraph elements."""
     for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
         tag.decompose()
 
@@ -50,7 +51,7 @@ def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
     paragraphs = [
         p.get_text(" ", strip=True)
         for p in target.find_all("p")
-        if len(p.get_text(strip=True)) > 35
+        if len(p.get_text(strip=True)) > 40
         and not p.get_text(strip=True).startswith(
             ("Also Read", "Click here", "Subscribe", "Explained |", "Follow us on")
         )
@@ -59,96 +60,120 @@ def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
     return "\n\n".join(paragraphs) if len(paragraphs) >= 2 else ""
 
 
-def _fetch_page(url: str) -> str:
-    """
-    Tiered fetching strategy:
-    1. Search Engine Crawler Identity (bypasses Indian Express / Cloudflare 403)
-    2. Desktop Chrome 120 TLS fingerprint
-    3. Trafilatura native fetch
-    4. Free public CORS proxy fallback
-    """
-    # Strategy 1: Googlebot Crawler profile (Bypasses Cloudflare on Indian Express & The Hindu)
-    try:
-        resp = curl_requests.get(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-            timeout=12,
-            follow_redirects=True,
-        )
-        if resp.status_code == 200 and len(resp.text) > 1200:
-            return resp.text
-    except Exception:
-        pass
+def _parse_html_payload(html: str) -> str:
+    """Runs schema, trafilatura, and bs4 against raw html."""
+    if not html or len(html) < 800:
+        return ""
 
-    # Strategy 2: Modern Chrome TLS fingerprint
-    try:
-        resp = curl_requests.get(
-            url,
-            impersonate="chrome120",
-            headers={"Referer": "https://www.google.com/"},
-            timeout=12,
-            follow_redirects=True,
-        )
-        if resp.status_code == 200 and len(resp.text) > 1200:
-            return resp.text
-    except Exception:
-        pass
+    soup = BeautifulSoup(html, "html.parser")
 
-    # Strategy 3: Trafilatura fetcher
-    try:
-        downloaded = trafilatura.fetch_url(url)
-        if downloaded and len(downloaded) > 1000:
-            return downloaded
-    except Exception:
-        pass
+    # 1. JSON-LD
+    json_ld = _extract_from_json_ld(soup)
+    if json_ld and len(json_ld) >= 300:
+        return _clean_text(json_ld)
 
-    # Strategy 4: High-speed proxy fallback
-    try:
-        proxy_url = f"https://api.allorigins.win/raw?url={url}"
-        resp = curl_requests.get(proxy_url, timeout=12)
-        if resp.status_code == 200 and len(resp.text) > 1200:
-            return resp.text
-    except Exception:
-        pass
+    # 2. Trafilatura
+    traf = trafilatura.extract(
+        html,
+        include_comments=False,
+        include_tables=False,
+        no_fallback=False,
+    )
+    if traf and len(traf.strip()) >= 300:
+        return _clean_text(traf)
+
+    # 3. DOM fallback
+    dom = _extract_soup_paragraphs(soup)
+    if dom and len(dom.strip()) >= 300:
+        return _clean_text(dom)
 
     return ""
 
 
 def extract_article(url: str) -> str:
     """
-    Main extraction pipeline:
-    Fetches raw HTML -> JSON-LD schema -> Trafilatura -> DOM BeautifulSoup
+    Multi-stage resilient pipeline:
+    1. Direct TLS request (works on The Hindu, NDTV, BBC, CNN, TOI)
+    2. Mobile AMP endpoint
+    3. Google Web Cache Mirror (bypasses Cloudflare block on Indian Express)
+    4. Jina Reader Engine Proxy
     """
     clean_url = url.strip()
-    html_content = _fetch_page(clean_url)
 
-    if not html_content:
-        return ""
+    # Step 1: Direct Fetch
+    try:
+        resp = curl_requests.get(
+            clean_url,
+            impersonate="chrome120",
+            timeout=10,
+            headers={
+                "Referer": "https://www.google.com/",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+        if resp.status_code == 200:
+            extracted = _parse_html_payload(resp.text)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
 
-    soup = BeautifulSoup(html_content, "html.parser")
+    # Step 2: Try Trafilatura fetch
+    try:
+        html = trafilatura.fetch_url(clean_url)
+        if html:
+            extracted = _parse_html_payload(html)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
 
-    # 1. JSON-LD schema extraction (purest, fastest)
-    json_ld_text = _extract_json_ld(soup)
-    if json_ld_text and len(json_ld_text) >= 300:
-        return _clean_text(json_ld_text)
+    # Step 3: Google WebCache Mirror (bypasses Indian Express Cloudflare wall)
+    try:
+        cache_url = f"https://webcache.googleusercontent.com/search?q=cache:{clean_url}"
+        cache_resp = curl_requests.get(
+            cache_url,
+            impersonate="chrome120",
+            timeout=10,
+        )
+        if cache_resp.status_code == 200:
+            extracted = _parse_html_payload(cache_resp.text)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
 
-    # 2. Trafilatura precision extraction
-    traf_text = trafilatura.extract(
-        html_content,
-        include_comments=False,
-        include_tables=False,
-        no_fallback=False,
-    )
-    if traf_text and len(traf_text.strip()) >= 300:
-        return _clean_text(traf_text)
+    # Step 4: Archive.org WayBack fallback
+    try:
+        archive_api = f"https://archive.org/wayback/available?url={clean_url}"
+        api_res = curl_requests.get(archive_api, timeout=6).json()
+        snapshot_url = api_res.get("archived_snapshots", {}).get("closest", {}).get("url")
+        if snapshot_url:
+            arch_resp = curl_requests.get(snapshot_url, impersonate="chrome120", timeout=10)
+            if arch_resp.status_code == 200:
+                extracted = _parse_html_payload(arch_resp.text)
+                if extracted:
+                    return extracted
+    except Exception:
+        pass
 
-    # 3. BeautifulSoup DOM paragraphs
-    dom_text = _extract_soup_paragraphs(soup)
-    if dom_text and len(dom_text.strip()) >= 300:
-        return _clean_text(dom_text)
+    # Step 5: Jina Reader Proxy with stripped query strings
+    try:
+        clean_target = clean_url.split("?")[0]
+        jina_url = f"https://r.jina.ai/{clean_target}"
+        jina_resp = curl_requests.get(
+            jina_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "x-return-format": "text",
+            },
+            timeout=12,
+        )
+        if jina_resp.status_code == 200:
+            content = jina_resp.text.strip()
+            if "403 Forbidden" not in content and len(content) >= 300:
+                return _clean_text(content)
+    except Exception:
+        pass
 
     return ""
