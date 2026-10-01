@@ -16,18 +16,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Hide the black datalist arrow icon from the input box
+# Hide datalist picker arrow indicator
 st.markdown(
     """
-    <style>
-    /* Removes the small dropdown/calendar-picker arrow from input fields */
-    input::-webkit-calendar-picker-indicator {
-        display: none !important;
-        opacity: 0 !important;
-        -webkit-appearance: none !important;
-        width: 0 !important;
-    }
-    </style>
+    
     """,
     unsafe_allow_html=True
 )
@@ -42,6 +34,9 @@ if "history" not in st.session_state:
 
 if "current_summary" not in st.session_state:
     st.session_state.current_summary = ""
+
+if "current_url" not in st.session_state:
+    st.session_state.current_url = ""
 
 
 # =====================================================
@@ -65,6 +60,7 @@ with st.sidebar:
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
         st.session_state.current_summary = ""
+        st.session_state.current_url = ""
         st.rerun()
 
 
@@ -73,50 +69,37 @@ with st.sidebar:
 # =====================================================
 
 st.title("📰 News Summarizer")
-st.markdown("Enter a news article URL and generate a concise summary.")
+st.markdown("Enter a news article URL or paste text directly to generate a concise summary.")
 
 
 # =====================================================
-# ARTICLE INPUT WITH POPUP URL HISTORY
+# ARTICLE INPUT (URL)
 # =====================================================
 
 st.subheader("🔗 Article Input")
 
-with st.form("news_summary_form"):
+with st.form("news_summary_form", clear_on_submit=False):
     url_input = st.text_input(
         "Paste News Article URL",
-        placeholder="https://example.com/news/article",
-        key="news_article_url_input"
+        value=st.session_state.current_url,
+        placeholder="https://example.com/news/article"
     )
 
-    submitted = st.form_submit_button(
+    submitted_url = st.form_submit_button(
         "🚀 Generate Summary",
         use_container_width=True
     )
 
-# Inject browser datalist so clicking the input box shows past URLs
+# Continuous datalist binder for past URLs
 past_unique_urls = list(dict.fromkeys([
-    item.get("url") for item in reversed(st.session_state.history) if item.get("url")
+    item.get("url") for item in reversed(st.session_state.history) if item.get("url") and item.get("url") != "Direct Paste"
 ]))
 
 if past_unique_urls:
-    options_html = "".join([f"<option value='{u}'>" for u in past_unique_urls])
+    options_html = "".join([f"" for u in past_unique_urls])
     components.html(
         f"""
-        <script>
-        const input = window.parent.document.querySelector('input[aria-label="Paste News Article URL"]');
-        if (input) {{
-            let datalist = window.parent.document.getElementById('recent_urls_list');
-            if (!datalist) {{
-                datalist = window.parent.document.createElement('datalist');
-                datalist.id = 'recent_urls_list';
-                window.parent.document.body.appendChild(datalist);
-            }}
-            datalist.innerHTML = "{options_html}";
-            input.setAttribute('list', 'recent_urls_list');
-            input.setAttribute('autocomplete', 'on');
-        }}
-        </script>
+        
         """,
         height=0,
         width=0,
@@ -124,10 +107,19 @@ if past_unique_urls:
 
 
 # =====================================================
-# PROCESS ARTICLE
+# DIRECT TEXT INPUT FALLBACK
 # =====================================================
 
-if submitted:
+with st.expander("📝 Or paste article text directly (for heavily firewalled sites)"):
+    direct_text = st.text_area("Paste article text here", height=180)
+    submitted_text = st.button("Summarize Pasted Text", use_container_width=True)
+
+
+# =====================================================
+# PROCESS: URL SUBMISSION
+# =====================================================
+
+if submitted_url:
     cleaned_url = url_input.strip()
 
     if not cleaned_url:
@@ -136,6 +128,8 @@ if submitted:
 
     if not cleaned_url.startswith(("http://", "https://")):
         cleaned_url = "https://" + cleaned_url
+
+    st.session_state.current_url = cleaned_url
 
     # Check cache
     cached_entry = next(
@@ -146,6 +140,7 @@ if submitted:
     if cached_entry and cached_entry.get("summary"):
         st.session_state.current_summary = cached_entry.get("summary", "")
         st.info("⚡ Loaded summary from recent history.")
+        st.rerun()
     else:
         # Extract article text
         extraction_start = time.perf_counter()
@@ -159,7 +154,7 @@ if submitted:
 
         if not article_text:
             st.error("❌ Unable to extract the article from this website.")
-            st.info("The publisher may be blocking automated scrapers. Please try another link.")
+            st.info("The publisher may be blocking automated scrapers. Please try another link or paste the text directly above.")
             st.stop()
 
         if len(article_text.strip()) < 300:
@@ -168,7 +163,7 @@ if submitted:
 
         st.success(f"✓ Article extracted successfully in {extraction_time:.2f} seconds")
 
-        # Generate summary
+        # Generate summary stream
         st.subheader("✨ Summary")
         summary_placeholder = st.empty()
         complete_summary = ""
@@ -204,10 +199,58 @@ if submitted:
 
 
 # =====================================================
+# PROCESS: DIRECT TEXT SUBMISSION
+# =====================================================
+
+if submitted_text:
+    cleaned_text = direct_text.strip()
+
+    if not cleaned_text:
+        st.warning("⚠️ Please paste some article text to summarize.")
+        st.stop()
+
+    if len(cleaned_text) < 200:
+        st.error("❌ The pasted text is too short to generate a reliable summary.")
+        st.stop()
+
+    st.subheader("✨ Summary")
+    summary_placeholder = st.empty()
+    complete_summary = ""
+    summary_start = time.perf_counter()
+
+    try:
+        with st.spinner("🤖 Generating summary"):
+            for chunk in generate_summary(cleaned_text):
+                complete_summary += chunk
+                summary_placeholder.markdown(complete_summary)
+
+        summary_time = time.perf_counter() - summary_start
+        st.success(f"✓ Summary generated in {summary_time:.2f} seconds")
+
+        first_line = complete_summary.strip().split("\n")[0].replace("*", "").replace("#", "").strip()
+        headline = first_line if first_line else "Pasted Article"
+
+        st.session_state.history.append({
+            "title": headline,
+            "url": "Direct Paste",
+            "summary": complete_summary
+        })
+
+        st.session_state.current_summary = complete_summary
+        st.rerun()
+
+    except Exception as e:
+        st.error("❌ Failed to generate the summary.")
+        st.caption(f"Error: {e}")
+        st.info("Please verify your GROQ_API_KEY inside `.streamlit/secrets.toml`.")
+        st.stop()
+
+
+# =====================================================
 # DISPLAY ACTIVE SUMMARY
 # =====================================================
 
-if st.session_state.current_summary and not submitted:
+if st.session_state.current_summary and not submitted_url and not submitted_text:
     st.subheader("✨ Summary")
     st.markdown(st.session_state.current_summary)
 
