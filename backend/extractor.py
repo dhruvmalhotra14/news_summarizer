@@ -1,217 +1,148 @@
 import json
 import re
-import requests
-import trafilatura
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from curl_cffi import requests as curl_requests
+import trafilatura
 
-# Optional TLS spoofing for Cloudflare-protected sites like Indian Express
-try:
-    from curl_cffi import requests as cffi_requests
-    HAS_CURL_CFFI = True
-except ImportError:
-    HAS_CURL_CFFI = False
-
-HEADERS = {
+BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.google.com/",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "cross-site",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 
-# Strictly reject error pages/bot challenges so they NEVER get passed to Groq
-ERROR_KEYWORDS = [
-    "unable to retrieve",
-    "could not retrieve",
-    "403 forbidden",
-    "access denied",
-    "just a moment...",
-    "verify you are human",
-    "cloudflare",
-    "please enable cookies",
-    "turn javascript on",
-]
 
-
-def clean_text(text: str) -> str:
-    """Cleans text and strictly blocks scraper error messages."""
-    if not text:
-        return ""
-
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    cleaned = "\n\n".join(lines).strip()
-
-    # If the text contains ANY scraper failure keywords, reject it completely
-    text_lower = cleaned.lower()
-    for err in ERROR_KEYWORDS:
-        if err in text_lower and len(cleaned) < 1200:
-            return ""
-
-    return cleaned
-
-
-def fetch_html(url: str) -> str:
-    """Fetch raw HTML using curl_cffi (Chrome TLS fingerprint) or requests."""
-    try:
-        if HAS_CURL_CFFI:
-            res = cffi_requests.get(url, headers=HEADERS, impersonate="chrome124", timeout=15)
-            if res.status_code == 200 and len(res.text) > 1000:
-                return res.text
-    except Exception:
-        pass
-
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
-        if res.status_code == 200:
-            return res.text
-    except Exception:
-        pass
-
-    return ""
-
-
-def extract_json_ld(soup: BeautifulSoup) -> str:
-    """Extract articleBody from structured schema (used heavily by Indian Express & NDTV)."""
-    try:
-        scripts = soup.find_all("script", type="application/ld+json")
-        for script in scripts:
-            if not script.string:
-                continue
-            try:
-                data = json.loads(script.string)
-            except Exception:
-                continue
-
+def _extract_from_json_ld(soup: BeautifulSoup) -> str:
+    """Attempts to pull articleBody directly from JSON-LD schema blocks."""
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
             items = data if isinstance(data, list) else [data]
             for item in items:
-                if not isinstance(item, dict):
-                    continue
-
-                body = item.get("articleBody")
-                if body and len(body.strip()) >= 350:
-                    return clean_text(body)
-
-                graph = item.get("@graph", [])
-                if isinstance(graph, list):
-                    for node in graph:
-                        if isinstance(node, dict) and node.get("articleBody"):
-                            body = node.get("articleBody")
-                            if len(body.strip()) >= 350:
-                                return clean_text(body)
-    except Exception:
-        pass
+                if isinstance(item, dict):
+                    # Check for articleBody in Article / NewsArticle schema
+                    if "articleBody" in item and item["articleBody"]:
+                        return item["articleBody"].strip()
+                    # Check graph array if present
+                    if "@graph" in item and isinstance(item["@graph"], list):
+                        for sub_item in item["@graph"]:
+                            if isinstance(sub_item, dict) and "articleBody" in sub_item:
+                                return sub_item["articleBody"].strip()
+        except Exception:
+            continue
     return ""
 
 
-def extract_ndtv(soup: BeautifulSoup) -> str:
-    """Dedicated NDTV DOM parser."""
-    selectors = [
-        "div[class*='sp-cn']",
-        "div[class*='story__content']",
-        "div[class*='article__content']",
-        "div[class*='story']",
-        "div[class*='content']",
-        "article",
-    ]
-    for selector in selectors:
-        for element in soup.select(selector):
-            paragraphs = element.find_all("p")
-            text = "\n\n".join(p.get_text(" ", strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20)
-            cleaned = clean_text(text)
-            if len(cleaned) >= 350:
-                return cleaned
-    return ""
-
-
-def extract_indian_express(soup: BeautifulSoup) -> str:
-    """Dedicated Indian Express DOM parser."""
-    # Indian Express holds the main story inside pcl-full-content or story-details
-    content_div = (
-        soup.find("div", id="pcl-full-content")
-        or soup.find("div", class_="story-details")
-        or soup.find("div", class_="story__content")
-        or soup.find("article")
+def _extract_from_dom(soup: BeautifulSoup) -> str:
+    """Fallback manual extraction for Indian Express and similar news structures."""
+    # Common container selectors for Indian Express articles
+    content_containers = soup.find_all(
+        "div",
+        class_=re.compile(
+            r"(story-details|full-details|story_details|ie-content|art-content|wp-block-post-content)",
+            re.IGNORECASE,
+        ),
     )
-    if content_div:
-        # Remove unwanted newsletter/ads widgets inside story
-        for tag in content_div(["script", "style", "aside", "nav", "figure"]):
-            tag.decompose()
-        paragraphs = content_div.find_all("p")
-        text = "\n\n".join(p.get_text(" ", strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20)
-        cleaned = clean_text(text)
-        if len(cleaned) >= 350:
-            return cleaned
+
+    if content_containers:
+        for container in content_containers:
+            paragraphs = [
+                p.get_text(strip=True)
+                for p in container.find_all("p")
+                if len(p.get_text(strip=True)) > 40
+            ]
+            if len(paragraphs) >= 3:
+                return "\n\n".join(paragraphs)
+
+    # General fallback: collect all main article paragraphs
+    paragraphs = [
+        p.get_text(strip=True)
+        for p in soup.find_all("p")
+        if len(p.get_text(strip=True)) > 50
+    ]
+    if len(paragraphs) >= 3:
+        return "\n\n".join(paragraphs)
+
     return ""
 
 
-def extract_article(url: str) -> str | None:
-    url = url.strip()
-    if not url.startswith(("http://", "https://")):
-        return None
+def extract_article(url: str) -> str:
+    """
+    Multi-layer article extraction pipeline:
+    1. curl_cffi with Chrome 124 TLS impersonation & browser headers
+    2. JSON-LD schema extraction (fastest, cleanest article text)
+    3. Trafilatura body parsing
+    4. BeautifulSoup DOM paragraph parsing
+    5. Jina Reader fallback (only if valid article text returned)
+    """
+    html_content = None
 
-    hostname = urlparse(url).netloc.lower()
+    # Step 1: Fetch with TLS Fingerprint Impersonation
+    try:
+        response = curl_requests.get(
+            url,
+            headers=BROWSER_HEADERS,
+            impersonate="chrome124",
+            timeout=15,
+            follow_redirects=True,
+        )
+        if response.status_code == 200 and response.text:
+            html_content = response.text
+    except Exception:
+        html_content = None
 
-    # Step 1: Fetch raw page
-    html = fetch_html(url)
-    if html:
-        soup = BeautifulSoup(html, "html.parser")
+    if html_content:
+        soup = BeautifulSoup(html_content, "html.parser")
 
-        # 1a. Try JSON-LD (Cleanest extraction for both NDTV & Indian Express)
-        json_text = extract_json_ld(soup)
-        if json_text:
-            return json_text
+        # Step 2: Try JSON-LD schema
+        json_ld_text = _extract_from_json_ld(soup)
+        if json_ld_text and len(json_ld_text) >= 300:
+            return json_ld_text
 
-        # 1b. Site-specific fallbacks
-        if "ndtv.com" in hostname:
-            ndtv_text = extract_ndtv(soup)
-            if ndtv_text:
-                return ndtv_text
-
-        if "indianexpress.com" in hostname:
-            ie_text = extract_indian_express(soup)
-            if ie_text:
-                return ie_text
-
-        # 1c. General Trafilatura extraction
-        traf_text = trafilatura.extract(
-            html,
+        # Step 3: Try Trafilatura
+        trafilatura_text = trafilatura.extract(
+            html_content,
             include_comments=False,
             include_tables=False,
-            favor_precision=True,
+            no_fallback=False,
         )
-        if traf_text:
-            cleaned = clean_text(traf_text)
-            if len(cleaned) >= 350:
-                return cleaned
+        if trafilatura_text and len(trafilatura_text.strip()) >= 300:
+            return trafilatura_text.strip()
 
-    # Step 2: Direct Trafilatura URL Fetcher
+        # Step 4: DOM fallback
+        dom_text = _extract_from_dom(soup)
+        if dom_text and len(dom_text.strip()) >= 300:
+            return dom_text.strip()
+
+    # Step 5: Jina Reader Proxy fallback (guarded against error strings)
     try:
-        downloaded = trafilatura.fetch_url(url)
-        if downloaded:
-            direct_text = trafilatura.extract(downloaded)
-            if direct_text:
-                cleaned = clean_text(direct_text)
-                if len(cleaned) >= 350:
-                    return cleaned
+        jina_url = f"https://r.jina.ai/{url}"
+        jina_response = curl_requests.get(
+            jina_url,
+            headers={"User-Agent": BROWSER_HEADERS["User-Agent"]},
+            impersonate="chrome124",
+            timeout=15,
+        )
+        if jina_response.status_code == 200:
+            content = jina_response.text.strip()
+            # Verify Jina didn't just return an error page payload
+            forbidden_markers = ["403 Forbidden", "Access Denied", "Cloudflare", "Robot or human?"]
+            if not any(marker in content for marker in forbidden_markers) and len(content) >= 300:
+                return content
     except Exception:
         pass
 
-    # Step 3: Fallback via Jina Reader (with strict rejection of error pages)
-    try:
-        res = requests.get(
-            f"https://r.jina.ai/{url}",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            timeout=20,
-        )
-        if res.status_code == 200:
-            cleaned = clean_text(res.text)
-            if len(cleaned) >= 400:
-                return cleaned
-    except Exception:
-        pass
-
-    return None
+    return ""
