@@ -2,6 +2,7 @@ import json
 import re
 import urllib.parse
 from bs4 import BeautifulSoup
+import feedparser
 import trafilatura
 from curl_cffi import requests as curl_requests
 
@@ -85,7 +86,7 @@ def _parse_html_payload(html: str) -> str:
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # 1. JSON-LD schema (most accurate and ad-free)
+    # 1. JSON-LD schema
     json_ld = _extract_from_json_ld(soup)
     if json_ld and not _is_error_payload(json_ld):
         return _clean_text(json_ld)
@@ -108,51 +109,61 @@ def _parse_html_payload(html: str) -> str:
     return ""
 
 
-def _fetch_via_relays(url: str) -> str:
-    """Tunnels the request through external relays whose IPs are not blocked by CloudFront."""
+def _fetch_indian_express_via_feed_and_syndication(url: str) -> str:
+    """
+    Indian Express maintains completely unblocked RSS / Mobile syndication
+    feeds that are exempt from Cloudflare Turnstile blocks.
+    """
     clean_target = url.split("?")[0].rstrip("/")
-    encoded_url = urllib.parse.quote(clean_target, safe="")
+    slug_part = clean_target.split("/")[-1]
 
-    # Relay 1: AllOrigins JSON bridge (Cloudflare-hosted, extracts page off-datacenter)
+    # Method 1: Feedparser matching from IE section feeds
+    section = "article"
+    parts = clean_target.split("/")
+    if len(parts) >= 5:
+        section = parts[4]  # e.g., entertainment, opinion, world, india
+
+    rss_urls = [
+        f"https://indianexpress.com/section/{section}/feed/",
+        "https://indianexpress.com/feed/",
+    ]
+
+    for rss in rss_urls:
+        try:
+            feed = feedparser.parse(rss)
+            for entry in feed.entries:
+                if slug_part in entry.link or entry.link.rstrip("/") == clean_target:
+                    content_raw = entry.get("content", [{}])[0].get("value", "") or entry.get("summary", "")
+                    if content_raw:
+                        soup = BeautifulSoup(content_raw, "html.parser")
+                        paragraphs = [p.get_text(strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) > 25]
+                        if paragraphs:
+                            return _clean_text("\n\n".join(paragraphs))
+                        text = soup.get_text(" ", strip=True)
+                        if len(text) > 250:
+                            return _clean_text(text)
+        except Exception:
+            pass
+
+    # Method 2: Google Search text-cache mirror
     try:
-        bridge_url = f"https://api.allorigins.win/get?url={encoded_url}"
-        resp = curl_requests.get(bridge_url, timeout=12)
+        gcache = f"https://webcache.googleusercontent.com/search?q=cache:{clean_target}&strip=1"
+        resp = curl_requests.get(gcache, timeout=8)
+        if resp.status_code == 200:
+            extracted = _parse_html_payload(resp.text)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
+
+    # Method 3: JSON Content Bridge
+    try:
+        encoded = urllib.parse.quote(clean_target, safe="")
+        bridge_url = f"https://api.allorigins.win/get?url={encoded}"
+        resp = curl_requests.get(bridge_url, timeout=10)
         if resp.status_code == 200:
             payload = resp.json().get("contents", "")
             extracted = _parse_html_payload(payload)
-            if extracted:
-                return extracted
-    except Exception:
-        pass
-
-    # Relay 2: CorsProxy gateway
-    try:
-        cors_url = f"https://corsproxy.io/?{clean_target}"
-        resp = curl_requests.get(
-            cors_url,
-            impersonate="chrome120",
-            timeout=12,
-            headers={"Accept": "text/html,application/xhtml+xml"}
-        )
-        if resp.status_code == 200:
-            extracted = _parse_html_payload(resp.text)
-            if extracted:
-                return extracted
-    except Exception:
-        pass
-
-    # Relay 3: Google AMP Project CDN Mirror
-    try:
-        stripped_domain = clean_target.replace("https://", "").replace("http://", "")
-        amp_cdn = f"https://cdn.ampproject.org/c/s/{stripped_domain}"
-        resp = curl_requests.get(
-            amp_cdn,
-            impersonate="chrome120",
-            timeout=10,
-            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"}
-        )
-        if resp.status_code == 200:
-            extracted = _parse_html_payload(resp.text)
             if extracted:
                 return extracted
     except Exception:
@@ -164,13 +175,13 @@ def _fetch_via_relays(url: str) -> str:
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Step 1: For Indian Express or known firewalled outlets, tunnel via relays immediately
+    # Special unblocked syndication route for Indian Express
     if "indianexpress.com" in clean_url:
-        relay_text = _fetch_via_relays(clean_url)
-        if relay_text:
-            return relay_text
+        ie_text = _fetch_indian_express_via_feed_and_syndication(clean_url)
+        if ie_text:
+            return ie_text
 
-    # Step 2: Standard direct fetch for other websites (The Hindu, NDTV, BBC, TOI)
+    # Standard direct fetch for other websites (The Hindu, NDTV, BBC, TOI)
     try:
         resp = curl_requests.get(
             clean_url,
@@ -188,7 +199,7 @@ def extract_article(url: str) -> str:
     except Exception:
         pass
 
-    # Step 3: Trafilatura standard fetch
+    # Trafilatura standard fetch
     try:
         html = trafilatura.fetch_url(clean_url)
         if html:
@@ -197,10 +208,5 @@ def extract_article(url: str) -> str:
                 return extracted
     except Exception:
         pass
-
-    # Step 4: Final relay attempt for any other site that might have blocked the direct request
-    fallback_text = _fetch_via_relays(clean_url)
-    if fallback_text:
-        return fallback_text
 
     return ""
