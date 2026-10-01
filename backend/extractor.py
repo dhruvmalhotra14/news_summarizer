@@ -7,7 +7,6 @@ from curl_cffi import requests as curl_requests
 
 
 def _clean_text(text: str) -> str:
-    """Cleans up raw parsed strings."""
     if not text:
         return ""
     text = re.sub(r"\n\s*\n+", "\n\n", text)
@@ -15,7 +14,6 @@ def _clean_text(text: str) -> str:
 
 
 def _is_error_payload(text: str) -> bool:
-    """Verifies that the extracted content is legitimate text and not a WAF block page."""
     if not text or len(text.strip()) < 250:
         return True
     lower = text.lower()
@@ -33,7 +31,6 @@ def _is_error_payload(text: str) -> bool:
 
 
 def _extract_from_json_ld(soup: BeautifulSoup) -> str:
-    """Extracts clean article text from JSON-LD schema (present in standard & AMP pages)."""
     for script in soup.find_all("script", type="application/ld+json"):
         if not script.string:
             continue
@@ -53,7 +50,6 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> str:
 
 
 def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
-    """Extracts article text from paragraph elements."""
     for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
         tag.decompose()
 
@@ -78,7 +74,6 @@ def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
 
 
 def _parse_html_payload(html: str) -> str:
-    """Parses raw HTML across JSON-LD, Trafilatura, and BeautifulSoup."""
     if not html or _is_error_payload(html):
         return ""
 
@@ -107,43 +102,48 @@ def _parse_html_payload(html: str) -> str:
     return ""
 
 
-def _fetch_protected_site(url: str) -> str:
-    """Multi-mirror extraction pipeline for AWS-blocked domains like Indian Express."""
-    clean_target = url.split("?")[0]
-    encoded_url = urllib.parse.quote(clean_target, safe="")
-    domain_and_path = clean_target.replace("https://", "").replace("http://", "")
-
-    # Mirror 1: Google AMP Cache (Hosted on Google CDN, never blocked by CloudFront)
-    amp_mirrors = [
-        f"https://cdn.ampproject.org/c/s/{domain_and_path}",
-        f"https://indianexpress-com.cdn.ampproject.org/c/s/{domain_and_path}",
-    ]
-    for amp_url in amp_mirrors:
+def _fetch_indian_express_api(url: str) -> str:
+    """
+    Directly extracts Indian Express articles via WordPress REST API & Lite feeds,
+    bypassing Cloudflare and CloudFront HTML firewalls entirely.
+    """
+    clean_target = url.split("?")[0].rstrip("/")
+    slug_match = re.search(r"/([^/]+)-(\d+)/?$", clean_target)
+    
+    # 1. Try WP REST API by post ID
+    if slug_match:
+        post_id = slug_match.group(2)
+        api_url = f"https://indianexpress.com/wp-json/wp/v2/posts/{post_id}"
         try:
-            resp = curl_requests.get(amp_url, impersonate="chrome120", timeout=8)
+            resp = curl_requests.get(
+                api_url,
+                impersonate="chrome120",
+                timeout=8,
+                headers={"Accept": "application/json"}
+            )
             if resp.status_code == 200:
-                extracted = _parse_html_payload(resp.text)
-                if extracted:
-                    return extracted
+                data = resp.json()
+                raw_html = data.get("content", {}).get("rendered", "")
+                if raw_html:
+                    soup = BeautifulSoup(raw_html, "html.parser")
+                    paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) > 30]
+                    if paragraphs:
+                        return _clean_text("\n\n".join(paragraphs))
         except Exception:
             pass
 
-    # Mirror 2: AllOrigins JSON Proxy (Fetches off-AWS and returns HTML in JSON)
+    # 2. Try Mobile Lite endpoint
+    lite_url = f"{clean_target}/lite/"
     try:
-        allorig_url = f"https://api.allorigins.win/get?url={encoded_url}"
-        resp = curl_requests.get(allorig_url, timeout=10)
-        if resp.status_code == 200:
-            payload = resp.json().get("contents", "")
-            extracted = _parse_html_payload(payload)
-            if extracted:
-                return extracted
-    except Exception:
-        pass
-
-    # Mirror 3: CodeTabs Relay
-    try:
-        codetabs_url = f"https://api.codetabs.com/v1/proxy?quest={encoded_url}"
-        resp = curl_requests.get(codetabs_url, timeout=10)
+        resp = curl_requests.get(
+            lite_url,
+            impersonate="chrome120",
+            timeout=8,
+            headers={
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+                "Referer": "https://www.google.com/"
+            }
+        )
         if resp.status_code == 200:
             extracted = _parse_html_payload(resp.text)
             if extracted:
@@ -151,14 +151,16 @@ def _fetch_protected_site(url: str) -> str:
     except Exception:
         pass
 
-    # Mirror 4: CorsProxy.io
+    # 3. External API Relay
     try:
-        cors_url = f"https://corsproxy.io/?url={encoded_url}"
-        resp = curl_requests.get(cors_url, impersonate="chrome120", timeout=10)
-        if resp.status_code == 200:
-            extracted = _parse_html_payload(resp.text)
-            if extracted:
-                return extracted
+        relay_url = f"https://r.jina.ai/{clean_target}"
+        resp = curl_requests.get(
+            relay_url,
+            headers={"x-return-format": "text"},
+            timeout=10
+        )
+        if resp.status_code == 200 and not _is_error_payload(resp.text):
+            return _clean_text(resp.text)
     except Exception:
         pass
 
@@ -168,9 +170,9 @@ def _fetch_protected_site(url: str) -> str:
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # If it is Indian Express, use the non-AWS proxy mirrors first
+    # Priority bypass for Indian Express
     if "indianexpress.com" in clean_url:
-        ie_text = _fetch_protected_site(clean_url)
+        ie_text = _fetch_indian_express_api(clean_url)
         if ie_text:
             return ie_text
 
@@ -201,10 +203,5 @@ def extract_article(url: str) -> str:
                 return extracted
     except Exception:
         pass
-
-    # Fallback to protected mirrors for any other firewalled site
-    fallback_text = _fetch_protected_site(clean_url)
-    if fallback_text:
-        return fallback_text
 
     return ""
