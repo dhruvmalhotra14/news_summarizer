@@ -4,20 +4,18 @@ from prompt import summary_prompt
 
 
 def generate_summary(article_text: str):
-    # 1. Fetch key from secrets
     api_key = st.secrets.get("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY not found in Streamlit secrets.")
 
     client = Groq(api_key=api_key)
 
-    # 2. Trim input context
     prompt = summary_prompt(article_text[:4000])
 
     try:
-        # Use an active Groq production model
+        # Use an active, valid Groq model
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "user", "content": prompt}
             ],

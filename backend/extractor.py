@@ -1,6 +1,5 @@
 import json
 import re
-import urllib.parse
 from bs4 import BeautifulSoup
 import trafilatura
 from curl_cffi import requests as curl_requests
@@ -85,12 +84,7 @@ def _parse_html_payload(html: str) -> str:
         return _clean_text(json_ld)
 
     # 2. Trafilatura
-    traf = trafilatura.extract(
-        html,
-        include_comments=False,
-        include_tables=False,
-        no_fallback=False,
-    )
+    traf = trafilatura.extract(html, no_fallback=False)
     if traf and not _is_error_payload(traf):
         return _clean_text(traf)
 
@@ -102,75 +96,10 @@ def _parse_html_payload(html: str) -> str:
     return ""
 
 
-def _fetch_indian_express(url: str) -> str:
-    clean_target = url.split("?")[0].rstrip("/")
-    
-    # Method 1: Indian Express Lite Version (Unblocked by Cloudflare on AWS)
-    lite_url = f"{clean_target}/lite/"
-    try:
-        resp = curl_requests.get(
-            lite_url,
-            impersonate="chrome120",
-            timeout=10,
-            headers={
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-                "Referer": "https://www.google.com/",
-            }
-        )
-        if resp.status_code == 200:
-            extracted = _parse_html_payload(resp.text)
-            if extracted:
-                return extracted
-    except Exception:
-        pass
-
-    # Method 2: Jina Reader with explicit Markdown Stripping
-    try:
-        jina_url = f"https://r.jina.ai/{clean_target}"
-        resp = curl_requests.get(
-            jina_url,
-            timeout=14,
-            headers={
-                "x-return-format": "text",
-                "x-no-cache": "true",
-            }
-        )
-        if resp.status_code == 200 and not _is_error_payload(resp.text):
-            lines = [line.strip() for line in resp.text.split("\n") if len(line.strip()) > 35]
-            filtered = [
-                l for l in lines 
-                if not l.startswith(("Title:", "URL Source:", "Markdown Content:", "http", "Also Read"))
-            ]
-            if len(filtered) >= 3:
-                return _clean_text("\n\n".join(filtered))
-    except Exception:
-        pass
-
-    # Method 3: CodeTabs CORS Proxy Tunnel (Bypasses AWS IP Blacklist)
-    try:
-        encoded = urllib.parse.quote(clean_target)
-        proxy_url = f"https://api.codetabs.com/v1/proxy?quest={encoded}"
-        resp = curl_requests.get(proxy_url, timeout=12)
-        if resp.status_code == 200:
-            extracted = _parse_html_payload(resp.text)
-            if extracted:
-                return extracted
-    except Exception:
-        pass
-
-    return ""
-
-
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Special handling for Indian Express
-    if "indianexpress.com" in clean_url:
-        ie_text = _fetch_indian_express(clean_url)
-        if ie_text:
-            return ie_text
-
-    # Standard direct fetch for all other news domains
+    # Step 1: Direct Fetch via Chrome TLS
     try:
         resp = curl_requests.get(
             clean_url,
@@ -188,13 +117,33 @@ def extract_article(url: str) -> str:
     except Exception:
         pass
 
-    # Trafilatura standard fetch
+    # Step 2: Trafilatura standard fetch
     try:
         html = trafilatura.fetch_url(clean_url)
         if html:
             extracted = _parse_html_payload(html)
             if extracted:
                 return extracted
+    except Exception:
+        pass
+
+    # Step 3: Jina Reader Proxy fallback (handles CDN/WAF blocks)
+    try:
+        clean_target = clean_url.split("?")[0].rstrip("/")
+        jina_url = f"https://r.jina.ai/{clean_target}"
+        resp = curl_requests.get(
+            jina_url,
+            timeout=14,
+            headers={"Accept": "text/plain"}
+        )
+        if resp.status_code == 200 and not _is_error_payload(resp.text):
+            lines = [l.strip() for l in resp.text.split("\n") if len(l.strip()) > 35]
+            filtered = [
+                l for l in lines
+                if not l.startswith(("Title:", "URL Source:", "Markdown Content:", "http", "Also Read"))
+            ]
+            if len(filtered) >= 3:
+                return _clean_text("\n\n".join(filtered))
     except Exception:
         pass
 
