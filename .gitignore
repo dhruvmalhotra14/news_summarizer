@@ -17,4 +17,3 @@ __pycache__/
 # OS Files
 .DS_Store
 Thumbs.db
-.streamlit/secrets.toml
