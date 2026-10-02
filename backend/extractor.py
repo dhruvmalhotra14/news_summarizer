@@ -1,6 +1,5 @@
-import json
+﻿import json
 import re
-import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import trafilatura
 from curl_cffi import requests as curl_requests
@@ -73,84 +72,100 @@ def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
     return "\n\n".join(paragraphs) if len(paragraphs) >= 2 else ""
 
 
-def _parse_html_payload(html: str) -> str:
-    if not html or _is_error_payload(html):
+# =====================================================
+# INDIAN EXPRESS SPECIFIC FETCHERS
+# =====================================================
+
+def _fetch_indian_express_direct(url: str) -> str:
+    """WordPress REST API se article uthata hai (HTML challenge bypass)."""
+    clean_target = url.split("?")[0].rstrip("/")
+    match = re.search(r"-(\d+)$", clean_target)
+    if not match:
         return ""
 
-    soup = BeautifulSoup(html, "html.parser")
-
-    # 1. JSON-LD
-    json_ld = _extract_from_json_ld(soup)
-    if json_ld and not _is_error_payload(json_ld):
-        return _clean_text(json_ld)
-
-    # 2. Trafilatura
-    traf = trafilatura.extract(html, no_fallback=False)
-    if traf and not _is_error_payload(traf):
-        return _clean_text(traf)
-
-    # 3. DOM fallback
-    dom = _extract_soup_paragraphs(soup)
-    if dom and not _is_error_payload(dom):
-        return _clean_text(dom)
-
-    return ""
-
-
-def _fetch_indian_express_article_feed(url: str) -> str:
-    """
-    Indian Express exposes an RSS feed per-article at /feed/
-    which bypasses Cloudflare Turnstile entirely.
-    """
-    clean_target = url.split("?")[0].rstrip("/")
-    feed_url = f"{clean_target}/feed/"
+    post_id = match.group(1)
+    api_url = f"https://indianexpress.com/wp-json/wp/v2/posts/{post_id}"
 
     try:
         resp = curl_requests.get(
-            feed_url,
+            api_url,
             impersonate="chrome120",
-            timeout=10,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-                "Accept": "application/rss+xml, application/xml, text/xml, */*",
-            }
+            timeout=12,
+            headers={"Accept": "application/json"},
         )
-        if resp.status_code == 200 and (" 30 and not p.get_text(strip=True).startswith(("Also Read", "Click here"))
-                        ]
-                        if paragraphs:
-                            return _clean_text("\n\n".join(paragraphs))
-    except Exception:
-        pass
-
-    # Alternative: Google AMP CDN fetch
-    try:
-        domain_path = clean_target.replace("https://", "").replace("http://", "")
-        amp_url = f"https://cdn.ampproject.org/c/s/{domain_path}"
-        resp = curl_requests.get(
-            amp_url,
-            impersonate="chrome120",
-            timeout=10,
-        )
+        print("IE API status:", resp.status_code)  # debug: ho jaye to hata dena
         if resp.status_code == 200:
-            extracted = _parse_html_payload(resp.text)
-            if extracted:
-                return extracted
-    except Exception:
-        pass
-
+            data = resp.json()
+            rendered_html = data.get("content", {}).get("rendered", "")
+            if rendered_html:
+                soup = BeautifulSoup(rendered_html, "html.parser")
+                for tag in soup(["script", "style", "iframe"]):
+                    tag.decompose()
+                paragraphs = [
+                    p.get_text(" ", strip=True)
+                    for p in soup.find_all("p")
+                    if len(p.get_text(strip=True)) > 35
+                    and not p.get_text(strip=True).startswith(
+                        ("Also Read", "Click here", "Subscribe")
+                    )
+                ]
+                if paragraphs:
+                    return _clean_text("\n\n".join(paragraphs))
+    except Exception as e:
+        print("IE API error:", e)
     return ""
 
+
+def _fetch_ie_lite(url: str) -> str:
+    """Indian Express ka lite/amp version aksar kam protected hota hai."""
+    base = url.split("?")[0].rstrip("/")
+    for variant in (base + "/lite/", base + "/amp/"):
+        try:
+            resp = curl_requests.get(variant, impersonate="chrome120", timeout=12)
+            print("IE variant", variant, resp.status_code)  # debug
+            if resp.status_code == 200:
+                text = trafilatura.extract(resp.text, no_fallback=False)
+                if text and not _is_error_payload(text):
+                    return _clean_text(text)
+        except Exception:
+            continue
+    return ""
+
+
+def _fetch_via_jina(url: str) -> str:
+    """r.jina.ai free reader proxy, aksar Cloudflare wali sites bhi padh leta hai."""
+    try:
+        resp = curl_requests.get(
+            f"https://r.jina.ai/{url}",
+            timeout=25,
+            headers={"Accept": "text/plain"},
+        )
+        print("Jina status:", resp.status_code)  # debug
+        if resp.status_code == 200 and resp.text:
+            text = resp.text
+            if "Markdown Content:" in text:
+                text = text.split("Markdown Content:", 1)[1]
+            return _clean_text(text)
+    except Exception as e:
+        print("Jina error:", e)
+    return ""
+
+
+# =====================================================
+# MAIN ENTRY
+# =====================================================
 
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Specialized unblocked feed handler for Indian Express
+    # Indian Express: fallback chain
     if "indianexpress.com" in clean_url:
-        ie_text = _fetch_indian_express_article_feed(clean_url)
-        if ie_text:
-            return ie_text
+        for fetcher in (_fetch_indian_express_direct, _fetch_ie_lite, _fetch_via_jina):
+            ie_text = fetcher(clean_url)
+            if ie_text and not _is_error_payload(ie_text):
+                return ie_text
 
-    # Standard direct fetch for all other websites
+    # Standard pipeline for all other news domains
     try:
         resp = curl_requests.get(
             clean_url,
@@ -162,20 +177,35 @@ def extract_article(url: str) -> str:
             },
         )
         if resp.status_code == 200:
-            extracted = _parse_html_payload(resp.text)
-            if extracted:
-                return extracted
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            json_ld = _extract_from_json_ld(soup)
+            if json_ld and not _is_error_payload(json_ld):
+                return _clean_text(json_ld)
+
+            traf = trafilatura.extract(resp.text, no_fallback=False)
+            if traf and not _is_error_payload(traf):
+                return _clean_text(traf)
+
+            dom = _extract_soup_paragraphs(soup)
+            if dom and not _is_error_payload(dom):
+                return _clean_text(dom)
     except Exception:
         pass
 
-    # Trafilatura standard fetch
+    # Trafilatura native fallback
     try:
         html = trafilatura.fetch_url(clean_url)
         if html:
-            extracted = _parse_html_payload(html)
-            if extracted:
-                return extracted
+            traf = trafilatura.extract(html, no_fallback=False)
+            if traf and not _is_error_payload(traf):
+                return _clean_text(traf)
     except Exception:
         pass
+
+    # Last resort: Jina for any site
+    jina_text = _fetch_via_jina(clean_url)
+    if jina_text and not _is_error_payload(jina_text):
+        return jina_text
 
     return ""

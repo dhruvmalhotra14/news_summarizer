@@ -10,15 +10,13 @@ def generate_summary(article_text: str):
 
     client = Groq(api_key=api_key)
 
-    prompt = summary_prompt(article_text[:4000])
+    # Trim input context (8000 chars = lambe articles ke liye better)
+    prompt = summary_prompt(article_text[:8000])
 
     try:
-        # Use an active, valid Groq model
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            model="openai/gpt-oss-120b",
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             stream=True,
         )
