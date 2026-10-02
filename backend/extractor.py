@@ -1,5 +1,6 @@
 import json
 import re
+import urllib.parse
 from bs4 import BeautifulSoup
 import trafilatura
 from curl_cffi import requests as curl_requests
@@ -13,7 +14,7 @@ def _clean_text(text: str) -> str:
 
 
 def _is_error_payload(text: str) -> bool:
-    if not text or len(text.strip()) < 200:
+    if not text or len(text.strip()) < 250:
         return True
     lower = text.lower()
     error_markers = [
@@ -72,47 +73,90 @@ def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
     return "\n\n".join(paragraphs) if len(paragraphs) >= 2 else ""
 
 
-def _fetch_indian_express_direct(url: str) -> str:
-    """
-    Extracts Indian Express articles directly via WordPress REST API
-    bypassing the Cloudflare HTML challenge completely.
-    """
+def _parse_html_payload(html: str) -> str:
+    if not html or _is_error_payload(html):
+        return ""
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 1. JSON-LD
+    json_ld = _extract_from_json_ld(soup)
+    if json_ld and not _is_error_payload(json_ld):
+        return _clean_text(json_ld)
+
+    # 2. Trafilatura
+    traf = trafilatura.extract(
+        html,
+        include_comments=False,
+        include_tables=False,
+        no_fallback=False,
+    )
+    if traf and not _is_error_payload(traf):
+        return _clean_text(traf)
+
+    # 3. DOM fallback
+    dom = _extract_soup_paragraphs(soup)
+    if dom and not _is_error_payload(dom):
+        return _clean_text(dom)
+
+    return ""
+
+
+def _fetch_indian_express(url: str) -> str:
     clean_target = url.split("?")[0].rstrip("/")
-    match = re.search(r"-(\d+)$", clean_target)
     
-    if match:
-        post_id = match.group(1)
-        api_url = f"https://indianexpress.com/wp-json/wp/v2/posts/{post_id}"
-        
-        try:
-            # Query the backend API directly with curl_cffi Chrome impersonation
-            resp = curl_requests.get(
-                api_url,
-                impersonate="chrome120",
-                timeout=12,
-                headers={
-                    "Accept": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                }
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                rendered_html = data.get("content", {}).get("rendered", "")
-                if rendered_html:
-                    soup = BeautifulSoup(rendered_html, "html.parser")
-                    # Clean out ad blocks, widgets, and shortcodes
-                    for tag in soup(["script", "style", "iframe"]):
-                        tag.decompose()
-                    paragraphs = [
-                        p.get_text(" ", strip=True)
-                        for p in soup.find_all("p")
-                        if len(p.get_text(strip=True)) > 35
-                        and not p.get_text(strip=True).startswith(("Also Read", "Click here", "Subscribe"))
-                    ]
-                    if paragraphs:
-                        return _clean_text("\n\n".join(paragraphs))
-        except Exception:
-            pass
+    # Method 1: Indian Express Lite Version (Unblocked by Cloudflare on AWS)
+    lite_url = f"{clean_target}/lite/"
+    try:
+        resp = curl_requests.get(
+            lite_url,
+            impersonate="chrome120",
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                "Referer": "https://www.google.com/",
+            }
+        )
+        if resp.status_code == 200:
+            extracted = _parse_html_payload(resp.text)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
+
+    # Method 2: Jina Reader with explicit Markdown Stripping
+    try:
+        jina_url = f"https://r.jina.ai/{clean_target}"
+        resp = curl_requests.get(
+            jina_url,
+            timeout=14,
+            headers={
+                "x-return-format": "text",
+                "x-no-cache": "true",
+            }
+        )
+        if resp.status_code == 200 and not _is_error_payload(resp.text):
+            lines = [line.strip() for line in resp.text.split("\n") if len(line.strip()) > 35]
+            filtered = [
+                l for l in lines 
+                if not l.startswith(("Title:", "URL Source:", "Markdown Content:", "http", "Also Read"))
+            ]
+            if len(filtered) >= 3:
+                return _clean_text("\n\n".join(filtered))
+    except Exception:
+        pass
+
+    # Method 3: CodeTabs CORS Proxy Tunnel (Bypasses AWS IP Blacklist)
+    try:
+        encoded = urllib.parse.quote(clean_target)
+        proxy_url = f"https://api.codetabs.com/v1/proxy?quest={encoded}"
+        resp = curl_requests.get(proxy_url, timeout=12)
+        if resp.status_code == 200:
+            extracted = _parse_html_payload(resp.text)
+            if extracted:
+                return extracted
+    except Exception:
+        pass
 
     return ""
 
@@ -120,13 +164,13 @@ def _fetch_indian_express_direct(url: str) -> str:
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Priority route for Indian Express via internal REST API
+    # Special handling for Indian Express
     if "indianexpress.com" in clean_url:
-        ie_text = _fetch_indian_express_direct(clean_url)
-        if ie_text and not _is_error_payload(ie_text):
+        ie_text = _fetch_indian_express(clean_url)
+        if ie_text:
             return ie_text
 
-    # Standard pipeline for all other news domains
+    # Standard direct fetch for all other news domains
     try:
         resp = curl_requests.get(
             clean_url,
@@ -138,28 +182,19 @@ def extract_article(url: str) -> str:
             },
         )
         if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            json_ld = _extract_from_json_ld(soup)
-            if json_ld and not _is_error_payload(json_ld):
-                return _clean_text(json_ld)
-
-            traf = trafilatura.extract(resp.text, no_fallback=False)
-            if traf and not _is_error_payload(traf):
-                return _clean_text(traf)
-
-            dom = _extract_soup_paragraphs(soup)
-            if dom and not _is_error_payload(dom):
-                return _clean_text(dom)
+            extracted = _parse_html_payload(resp.text)
+            if extracted:
+                return extracted
     except Exception:
         pass
 
-    # Trafilatura native fallback
+    # Trafilatura standard fetch
     try:
         html = trafilatura.fetch_url(clean_url)
         if html:
-            traf = trafilatura.extract(html, no_fallback=False)
-            if traf and not _is_error_payload(traf):
-                return _clean_text(traf)
+            extracted = _parse_html_payload(html)
+            if extracted:
+                return extracted
     except Exception:
         pass
 

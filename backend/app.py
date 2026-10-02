@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Hide datalist picker arrow indicator
+# Hide datalist picker dropdown arrow
 st.markdown(
     """
     
@@ -90,7 +90,7 @@ with st.form("news_summary_form", clear_on_submit=False):
         use_container_width=True
     )
 
-# Continuous datalist binder for past URLs
+# Continuous datalist binder for persistent past URLs
 past_unique_urls = list(dict.fromkeys([
     item.get("url") for item in reversed(st.session_state.history) if item.get("url")
 ]))
@@ -198,7 +198,7 @@ if st.session_state.current_summary and not submitted:
     st.markdown(st.session_state.current_summary)
 
     st.download_button(
-        label="⬇️️ Download Summary",
+        label="⬇ Download Summary",
         data=st.session_state.current_summary,
         file_name="news_summary.txt",
         mime="text/plain",
