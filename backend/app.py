@@ -1,7 +1,7 @@
 import time
 import streamlit as st
 
-from extractor import extract_article
+from extractor import extract_article, DEBUG_LOG
 from ai import generate_summary
 
 
@@ -100,6 +100,8 @@ if submitted:
     if not article_text:
         st.error("❌ Unable to extract the article from this website.")
         st.info("The publisher is blocking automated access. Please try another link.")
+        with st.expander("🛠️ Debug details", expanded=True):
+            st.code("\n".join(DEBUG_LOG) or "No debug info")
         st.stop()
 
     if len(article_text.strip()) < 300:
