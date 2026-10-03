@@ -5,81 +5,31 @@ from prompt import summary_prompt
 
 
 def generate_summary(article_text: str):
-
-    # =====================================================
-    # GET GROQ API KEY
-    # =====================================================
-
-    api_key = st.secrets.get(
-        "GROQ_API_KEY"
-    )
-
-    if not api_key:
-
-        raise ValueError(
-            "GROQ_API_KEY not found in Streamlit secrets."
-        )
-
-
-    # =====================================================
-    # CREATE GROQ CLIENT
-    # =====================================================
+    api_key = st.secrets["GROQ_API_KEY"]
 
     client = Groq(
         api_key=api_key
     )
 
-
-    # =====================================================
-    # CREATE PROMPT
-    # =====================================================
-
     prompt = summary_prompt(
         article_text[:4000]
     )
 
+    completion = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.3,
+        stream=True
+    )
 
-    # =====================================================
-    # GENERATE SUMMARY
-    # =====================================================
-
-    try:
-
-        completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
-
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-
-            temperature=0.3,
-
-            stream=True
-        )
-
-
-        # =================================================
-        # STREAM RESPONSE
-        # =================================================
-
-        for chunk in completion:
-
-            delta = (
-                chunk.choices[0]
-                .delta
-                .content
-            )
+    for chunk in completion:
+        if chunk.choices:
+            delta = chunk.choices[0].delta.content
 
             if delta:
-
                 yield delta
-
-
-    except Exception as e:
-
-        raise RuntimeError(
-            f"Groq API Error: {str(e)}"
-        )
