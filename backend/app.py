@@ -6,9 +6,9 @@ from extractor import extract_article
 from ai import generate_summary
 
 
-# =====================================================
-# PAGE CONFIG
-# =====================================================
+# -----------------------------
+# Page Configuration
+# -----------------------------
 
 st.set_page_config(
     page_title="News Summarizer",
@@ -17,9 +17,9 @@ st.set_page_config(
 )
 
 
-# =====================================================
-# SESSION STATE INITIALIZATION
-# =====================================================
+# -----------------------------
+# Session State
+# -----------------------------
 
 if "history" not in st.session_state:
     st.session_state.history = []
@@ -31,9 +31,9 @@ if "current_url" not in st.session_state:
     st.session_state.current_url = ""
 
 
-# =====================================================
-# SIDEBAR
-# =====================================================
+# -----------------------------
+# Sidebar
+# -----------------------------
 
 with st.sidebar:
 
@@ -60,9 +60,7 @@ with st.sidebar:
 
     else:
 
-        st.info(
-            "No summaries generated yet."
-        )
+        st.info("No summaries generated yet.")
 
     st.markdown("---")
 
@@ -78,9 +76,9 @@ with st.sidebar:
         st.rerun()
 
 
-# =====================================================
-# MAIN HEADER
-# =====================================================
+# -----------------------------
+# Main Page
+# -----------------------------
 
 st.title("📰 News Summarizer")
 
@@ -89,11 +87,12 @@ st.markdown(
 )
 
 
-# =====================================================
-# ARTICLE INPUT
-# =====================================================
+# -----------------------------
+# Article Input
+# -----------------------------
 
 st.subheader("🔗 Article Input")
+
 
 with st.form(
     "news_summary_form",
@@ -112,17 +111,18 @@ with st.form(
     )
 
 
-# =====================================================
-# PROCESS ARTICLE
-# =====================================================
+# -----------------------------
+# Generate Summary
+# -----------------------------
 
 if submitted:
 
     cleaned_url = url_input.strip()
 
-    # -------------------------------------------------
+
+    # -----------------------------
     # Validate URL
-    # -------------------------------------------------
+    # -----------------------------
 
     if not cleaned_url:
 
@@ -132,52 +132,34 @@ if submitted:
 
         st.stop()
 
+
+    # Add HTTPS if missing
+
     if not cleaned_url.startswith(
         ("http://", "https://")
     ):
 
         cleaned_url = "https://" + cleaned_url
 
+
     st.session_state.current_url = cleaned_url
 
 
-    # -------------------------------------------------
-    # Check cache/history
-    # -------------------------------------------------
-
-    cached_entry = next(
-        (
-            item
-            for item in st.session_state.history
-            if item.get("url") == cleaned_url
-        ),
-        None
-    )
-
-    if (
-        cached_entry
-        and cached_entry.get("summary")
-    ):
-
-        st.session_state.current_summary = (
-            cached_entry.get(
-                "summary",
-                ""
-            )
-        )
-
-        st.info(
-            "⚡ Loaded summary from recent history."
-        )
-
-        st.rerun()
+    # IMPORTANT:
+    # There is NO history/cache check here.
+    #
+    # Every time the user clicks
+    # "Generate Summary", the article
+    # will be extracted again.
+    # -----------------------------
 
 
-    # -------------------------------------------------
-    # Extract article
-    # -------------------------------------------------
+    # -----------------------------
+    # Extract Article
+    # -----------------------------
 
     extraction_start = time.perf_counter()
+
 
     with st.spinner(
         "🔎 Extracting article..."
@@ -197,15 +179,16 @@ if submitted:
                 f"Extraction error: {e}"
             )
 
+
     extraction_time = (
         time.perf_counter()
         - extraction_start
     )
 
 
-    # -------------------------------------------------
-    # Extraction failed
-    # -------------------------------------------------
+    # -----------------------------
+    # Extraction Failed
+    # -----------------------------
 
     if not article_text:
 
@@ -221,9 +204,9 @@ if submitted:
         st.stop()
 
 
-    # -------------------------------------------------
-    # Check article length
-    # -------------------------------------------------
+    # -----------------------------
+    # Article Too Short
+    # -----------------------------
 
     if len(article_text.strip()) < 300:
 
@@ -235,15 +218,19 @@ if submitted:
         st.stop()
 
 
+    # -----------------------------
+    # Extraction Successful
+    # -----------------------------
+
     st.success(
         f"✓ Article extracted successfully "
         f"in {extraction_time:.2f} seconds"
     )
 
 
-    # -------------------------------------------------
-    # Generate summary
-    # -------------------------------------------------
+    # -----------------------------
+    # Generate AI Summary
+    # -----------------------------
 
     st.subheader("✨ Summary")
 
@@ -252,6 +239,7 @@ if submitted:
     complete_summary = ""
 
     summary_start = time.perf_counter()
+
 
     try:
 
@@ -276,15 +264,19 @@ if submitted:
         )
 
 
+        # -----------------------------
+        # Summary Generated
+        # -----------------------------
+
         st.success(
             f"✓ Summary generated in "
             f"{summary_time:.2f} seconds"
         )
 
 
-        # -------------------------------------------------
-        # Create headline
-        # -------------------------------------------------
+        # -----------------------------
+        # Create History Title
+        # -----------------------------
 
         first_line = (
             complete_summary
@@ -295,6 +287,7 @@ if submitted:
             .strip()
         )
 
+
         headline = (
             first_line
             if first_line
@@ -302,9 +295,9 @@ if submitted:
         )
 
 
-        # -------------------------------------------------
-        # Save history
-        # -------------------------------------------------
+        # -----------------------------
+        # Save Summary to History
+        # -----------------------------
 
         st.session_state.history.append(
             {
@@ -314,9 +307,15 @@ if submitted:
             }
         )
 
+
+        # Save current summary
+
         st.session_state.current_summary = (
             complete_summary
         )
+
+
+        # Refresh page
 
         st.rerun()
 
@@ -339,9 +338,9 @@ if submitted:
         st.stop()
 
 
-# =====================================================
-# DISPLAY CURRENT SUMMARY
-# =====================================================
+# -----------------------------
+# Display Existing Summary
+# -----------------------------
 
 if (
     st.session_state.current_summary
@@ -353,6 +352,11 @@ if (
     st.markdown(
         st.session_state.current_summary
     )
+
+
+    # -----------------------------
+    # Download Summary
+    # -----------------------------
 
     st.download_button(
         label="⬇️ Download Summary",
