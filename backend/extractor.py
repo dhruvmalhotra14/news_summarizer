@@ -1,5 +1,6 @@
 ﻿import json
 import re
+
 from bs4 import BeautifulSoup
 import trafilatura
 from curl_cffi import requests as curl_requests
@@ -8,6 +9,7 @@ from curl_cffi import requests as curl_requests
 def _clean_text(text: str) -> str:
     if not text:
         return ""
+
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     return text.strip()
 
@@ -15,7 +17,9 @@ def _clean_text(text: str) -> str:
 def _is_error_payload(text: str) -> bool:
     if not text or len(text.strip()) < 200:
         return True
+
     lower = text.lower()
+
     error_markers = [
         "403 forbidden",
         "cloudfront",
@@ -26,258 +30,311 @@ def _is_error_payload(text: str) -> bool:
         "enable javascript",
         "just a moment...",
     ]
+
     return any(marker in lower for marker in error_markers)
 
 
 def _extract_from_json_ld(soup: BeautifulSoup) -> str:
-    for script in soup.find_all("script", type="application/ld+json"):
+    for script in soup.find_all(
+        "script",
+        type="application/ld+json"
+    ):
         if not script.string:
             continue
+
         try:
             data = json.loads(script.string.strip())
             items = data if isinstance(data, list) else [data]
+
             for item in items:
-                if isinstance(item, dict):
-                    if item.get("articleBody"):
-                        return item["articleBody"].strip()
-                    for graph_item in item.get("@graph", []):
-                        if isinstance(graph_item, dict) and graph_item.get("articleBody"):
-                            return graph_item["articleBody"].strip()
+                if not isinstance(item, dict):
+                    continue
+
+                if item.get("articleBody"):
+                    return item["articleBody"].strip()
+
+                for graph_item in item.get("@graph", []):
+                    if (
+                        isinstance(graph_item, dict)
+                        and graph_item.get("articleBody")
+                    ):
+                        return graph_item["articleBody"].strip()
+
         except Exception:
             continue
+
     return ""
 
 
 def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
-    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
+    for tag in soup([
+        "script",
+        "style",
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "form",
+    ]):
         tag.decompose()
 
     container = soup.find(
         "div",
         class_=re.compile(
-            r"(story-details|full-details|story_details|ie-content|art-content|wp-block-post-content|article-body|storycontent)",
+            r"(story-details|full-details|story_details|"
+            r"ie-content|art-content|wp-block-post-content|"
+            r"article-body|storycontent)",
             re.IGNORECASE,
         ),
-    ) or soup.find(["article", "main"])
+    )
+
+    if not container:
+        container = soup.find(["article", "main"])
 
     target = container if container else soup
-    paragraphs = [
-        p.get_text(" ", strip=True)
-        for p in target.find_all("p")
-        if len(p.get_text(strip=True)) > 35
-        and not p.get_text(strip=True).startswith(
-            ("Also Read", "Click here", "Subscribe", "Explained |", "Follow us on")
-        )
-    ]
-    return "\n\n".join(paragraphs) if len(paragraphs) >= 2 else ""
 
+    paragraphs = []
 
-# =====================================================
-# INDIAN EXPRESS SPECIFIC FETCHERS
-# =====================================================
+    for p in target.find_all("p"):
+        text = p.get_text(" ", strip=True)
+
+        if len(text) <= 35:
+            continue
+
+        if text.startswith(
+            (
+                "Also Read",
+                "Click here",
+                "Subscribe",
+                "Explained |",
+                "Follow us on",
+            )
+        ):
+            continue
+
+        paragraphs.append(text)
+
+    if len(paragraphs) >= 2:
+        return "\n\n".join(paragraphs)
+
+    return ""
+
 
 def _fetch_indian_express_direct(url: str) -> str:
-    """WordPress REST API se article uthata hai (HTML challenge bypass)."""
+    """
+    Try extracting Indian Express articles using
+    the WordPress REST API.
+    """
+
     clean_target = url.split("?")[0].rstrip("/")
+
     match = re.search(r"-(\d+)$", clean_target)
+
     if not match:
+        print("Indian Express: Article ID not found.")
         return ""
 
     post_id = match.group(1)
-    api_url = f"https://indianexpress.com/wp-json/wp/v2/posts/{post_id}"
+
+    api_url = (
+        f"https://indianexpress.com/wp-json/wp/v2/posts/{post_id}"
+    )
+
+    print("Indian Express API URL:", api_url)
 
     try:
-        resp = curl_requests.get(
+        response = curl_requests.get(
             api_url,
             impersonate="chrome120",
-            timeout=12,
-            headers={"Accept": "application/json"},
-        )
-        print("IE API status:", resp.status_code)  # debug: ho jaye to hata dena
-        if resp.status_code == 200:
-            data = resp.json()
-            rendered_html = data.get("content", {}).get("rendered", "")
-            if rendered_html:
-                soup = BeautifulSoup(rendered_html, "html.parser")
-                for tag in soup(["script", "style", "iframe"]):
-                    tag.decompose()
-                paragraphs = [
-                    p.get_text(" ", strip=True)
-                    for p in soup.find_all("p")
-                    if len(p.get_text(strip=True)) > 35
-                    and not p.get_text(strip=True).startswith(
-                        ("Also Read", "Click here", "Subscribe")
-                    )
-                ]
-                if paragraphs:
-                    return _clean_text("\n\n".join(paragraphs))
-    except Exception as e:
-        print("IE API error:", e)
-    return ""
-
-
-def _fetch_ie_lite(url: str) -> str:
-    """Indian Express ka lite/amp version aksar kam protected hota hai."""
-    base = url.split("?")[0].rstrip("/")
-    for variant in (base + "/lite/", base + "/amp/"):
-        try:
-            resp = curl_requests.get(variant, impersonate="chrome120", timeout=12)
-            print("IE variant", variant, resp.status_code)  # debug
-            if resp.status_code == 200:
-                text = trafilatura.extract(resp.text, no_fallback=False)
-                if text and not _is_error_payload(text):
-                    return _clean_text(text)
-        except Exception:
-            continue
-    return ""
-
-
-def _fetch_via_jina(url: str) -> str:
-    """r.jina.ai free reader proxy, aksar Cloudflare wali sites bhi padh leta hai."""
-    try:
-        resp = curl_requests.get(
-            f"https://r.jina.ai/{url}",
-            timeout=25,
-            headers={"Accept": "text/plain"},
-        )
-        print("Jina status:", resp.status_code)  # debug
-        if resp.status_code == 200 and resp.text:
-            text = resp.text
-            if "Markdown Content:" in text:
-                text = text.split("Markdown Content:", 1)[1]
-            return _clean_text(text)
-    except Exception as e:
-        print("Jina error:", e)
-    return ""
-
-
-def _extract_from_html(html: str) -> str:
-    """Run the full extraction pipeline on raw HTML."""
-    soup = BeautifulSoup(html, "html.parser")
-
-    json_ld = _extract_from_json_ld(soup)
-    if json_ld and not _is_error_payload(json_ld):
-        return _clean_text(json_ld)
-
-    traf = trafilatura.extract(html, no_fallback=False)
-    if traf and not _is_error_payload(traf):
-        return _clean_text(traf)
-
-    dom = _extract_soup_paragraphs(soup)
-    if dom and not _is_error_payload(dom):
-        return _clean_text(dom)
-    return ""
-
-
-def _fetch_via_scraper_api(url: str) -> str:
-    """
-    Paid/free-tier scraping API (ScraperAPI) that uses residential proxies.
-    Needs SCRAPER_API_KEY in .streamlit/secrets.toml
-    """
-    try:
-        import streamlit as st
-        api_key = st.secrets.get("SCRAPER_API_KEY")
-    except Exception:
-        api_key = None
-    if not api_key:
-        return ""
-
-    try:
-        resp = curl_requests.get(
-            "https://api.scraperapi.com/",
-            params={
-                "api_key": api_key,
-                "url": url,
-                "premium": "true",
-                "country_code": "in",
+            timeout=15,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
             },
-            timeout=60,
         )
-        print("ScraperAPI status:", resp.status_code)  # debug
-        if resp.status_code == 200:
-            return _extract_from_html(resp.text)
+
+        print(
+            "Indian Express API status:",
+            response.status_code
+        )
+
+        if response.status_code != 200:
+            return ""
+
+        data = response.json()
+
+        rendered_html = (
+            data
+            .get("content", {})
+            .get("rendered", "")
+        )
+
+        if not rendered_html:
+            return ""
+
+        soup = BeautifulSoup(
+            rendered_html,
+            "html.parser"
+        )
+
+        for tag in soup([
+            "script",
+            "style",
+            "iframe",
+            "figure",
+            "figcaption",
+        ]):
+            tag.decompose()
+
+        paragraphs = []
+
+        for p in soup.find_all("p"):
+            text = p.get_text(" ", strip=True)
+
+            if len(text) <= 35:
+                continue
+
+            if text.startswith(
+                (
+                    "Also Read",
+                    "Click here",
+                    "Subscribe",
+                    "Follow us",
+                )
+            ):
+                continue
+
+            paragraphs.append(text)
+
+        if paragraphs:
+            article_text = "\n\n".join(paragraphs)
+            article_text = _clean_text(article_text)
+
+            if not _is_error_payload(article_text):
+                print(
+                    "Indian Express article extracted successfully."
+                )
+
+                return article_text
+
     except Exception as e:
-        print("ScraperAPI error:", e)
+        print(
+            "Indian Express API error:",
+            e
+        )
+
     return ""
 
-
-def _fetch_via_wayback(url: str) -> str:
-    """Archived copy from the Wayback Machine (works only if the page was archived)."""
-    try:
-        resp = curl_requests.get(
-            f"https://web.archive.org/web/2/{url}",
-            impersonate="chrome120",
-            timeout=25,
-        )
-        print("Wayback status:", resp.status_code)  # debug
-        if resp.status_code == 200:
-            return _extract_from_html(resp.text)
-    except Exception as e:
-        print("Wayback error:", e)
-    return ""
-
-
-# =====================================================
-# MAIN ENTRY
-# =====================================================
 
 def extract_article(url: str) -> str:
     clean_url = url.strip()
 
-    # Indian Express: fallback chain
-    if "indianexpress.com" in clean_url:
-        for fetcher in (
-            _fetch_indian_express_direct,
-            _fetch_ie_lite,
-            _fetch_via_scraper_api,
-            _fetch_via_jina,
-            _fetch_via_wayback,
-        ):
-            ie_text = fetcher(clean_url)
-            if ie_text and not _is_error_payload(ie_text):
-                return ie_text
+    # Indian Express special extraction
+    if "indianexpress.com" in clean_url.lower():
 
-    # Standard pipeline for all other news domains
+        print("Indian Express detected.")
+
+        ie_text = _fetch_indian_express_direct(
+            clean_url
+        )
+
+        if ie_text:
+            return ie_text
+
+        print(
+            "Indian Express API failed."
+        )
+
+    # Normal extraction for other websites
     try:
-        resp = curl_requests.get(
+        response = curl_requests.get(
             clean_url,
             impersonate="chrome120",
             timeout=10,
             headers={
                 "Referer": "https://www.google.com/",
                 "Accept-Language": "en-US,en;q=0.9",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
             },
         )
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
 
+        if response.status_code == 200:
+
+            soup = BeautifulSoup(
+                response.text,
+                "html.parser"
+            )
+
+            # JSON-LD extraction
             json_ld = _extract_from_json_ld(soup)
-            if json_ld and not _is_error_payload(json_ld):
+
+            if (
+                json_ld
+                and not _is_error_payload(json_ld)
+            ):
                 return _clean_text(json_ld)
 
-            traf = trafilatura.extract(resp.text, no_fallback=False)
-            if traf and not _is_error_payload(traf):
+            # Trafilatura extraction
+            traf = trafilatura.extract(
+                response.text,
+                no_fallback=False
+            )
+
+            if (
+                traf
+                and not _is_error_payload(traf)
+            ):
                 return _clean_text(traf)
 
-            dom = _extract_soup_paragraphs(soup)
-            if dom and not _is_error_payload(dom):
+            # BeautifulSoup extraction
+            dom = _extract_soup_paragraphs(
+                soup
+            )
+
+            if (
+                dom
+                and not _is_error_payload(dom)
+            ):
                 return _clean_text(dom)
-    except Exception:
-        pass
 
-    # Trafilatura native fallback
+    except Exception as e:
+        print(
+            "Standard extraction error:",
+            e
+        )
+
+    # Trafilatura fallback
     try:
-        html = trafilatura.fetch_url(clean_url)
-        if html:
-            traf = trafilatura.extract(html, no_fallback=False)
-            if traf and not _is_error_payload(traf):
-                return _clean_text(traf)
-    except Exception:
-        pass
+        html = trafilatura.fetch_url(
+            clean_url
+        )
 
-    # Last resort: Jina for any site
-    jina_text = _fetch_via_jina(clean_url)
-    if jina_text and not _is_error_payload(jina_text):
-        return jina_text
+        if html:
+            traf = trafilatura.extract(
+                html,
+                no_fallback=False
+            )
+
+            if (
+                traf
+                and not _is_error_payload(traf)
+            ):
+                return _clean_text(traf)
+
+    except Exception as e:
+        print(
+            "Trafilatura fallback error:",
+            e
+        )
 
     return ""

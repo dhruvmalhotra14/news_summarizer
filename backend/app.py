@@ -1,7 +1,9 @@
 import time
-import streamlit as st
 
-from extractor import extract_article, DEBUG_LOG
+import streamlit as st
+import streamlit.components.v1 as components
+
+from extractor import extract_article
 from ai import generate_summary
 
 
@@ -9,16 +11,25 @@ from ai import generate_summary
 # PAGE CONFIG
 # =====================================================
 
-st.set_page_config(page_title="News Summarizer", page_icon="📰", layout="wide")
+st.set_page_config(
+    page_title="News Summarizer",
+    page_icon="📰",
+    layout="wide"
+)
 
 
 # =====================================================
-# SESSION STATE
+# SESSION STATE INITIALIZATION
 # =====================================================
 
-st.session_state.setdefault("history", [])
-st.session_state.setdefault("current_summary", "")
-st.session_state.setdefault("current_url", "")
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+if "current_summary" not in st.session_state:
+    st.session_state.current_summary = ""
+
+if "current_url" not in st.session_state:
+    st.session_state.current_url = ""
 
 
 # =====================================================
@@ -26,132 +37,364 @@ st.session_state.setdefault("current_url", "")
 # =====================================================
 
 with st.sidebar:
+
     st.title("📰 News Summarizer")
+
     st.markdown("---")
+
     st.subheader("Summary History")
 
     if st.session_state.history:
-        for i, item in enumerate(reversed(st.session_state.history)):
-            title = item.get("title") or item.get("url", "Article")
-            st.markdown(f"**{i + 1}.** {title}")
+
+        for i, item in enumerate(
+            reversed(st.session_state.history)
+        ):
+
+            title = (
+                item.get("title")
+                or item.get("url", "Article")
+            )
+
+            st.markdown(
+                f"**{i + 1}.** {title}"
+            )
+
     else:
-        st.info("No summaries generated yet.")
+
+        st.info(
+            "No summaries generated yet."
+        )
 
     st.markdown("---")
 
-    if st.button("🗑️ Clear History", use_container_width=True):
+    if st.button(
+        "🗑️ Clear History",
+        use_container_width=True
+    ):
+
         st.session_state.history = []
         st.session_state.current_summary = ""
         st.session_state.current_url = ""
+
         st.rerun()
 
 
 # =====================================================
-# HEADER + INPUT
+# MAIN HEADER
 # =====================================================
 
 st.title("📰 News Summarizer")
-st.markdown("Paste a news article link and get a concise summary.")
 
-st.subheader("🔗 Article Link")
-
-with st.form("news_summary_form", clear_on_submit=False):
-    url_input = st.text_input(
-        "Paste news article URL",
-        value=st.session_state.current_url,
-        placeholder="https://example.com/news/article",
-    )
-    submitted = st.form_submit_button("🚀 Generate Summary", use_container_width=True)
+st.markdown(
+    "Enter a news article URL and generate a concise summary."
+)
 
 
 # =====================================================
-# PROCESS
+# ARTICLE INPUT
+# =====================================================
+
+st.subheader("🔗 Article Input")
+
+with st.form(
+    "news_summary_form",
+    clear_on_submit=False
+):
+
+    url_input = st.text_input(
+        "Paste News Article URL",
+        value=st.session_state.current_url,
+        placeholder="https://example.com/news/article"
+    )
+
+    submitted = st.form_submit_button(
+        "🚀 Generate Summary",
+        use_container_width=True
+    )
+
+
+# =====================================================
+# PAST URLS
+# =====================================================
+
+past_unique_urls = list(
+    dict.fromkeys(
+        [
+            item.get("url")
+            for item in reversed(
+                st.session_state.history
+            )
+            if item.get("url")
+        ]
+    )
+)
+
+if past_unique_urls:
+
+    options_html = "".join(
+        [
+            f"<option value='{u}'></option>"
+            for u in past_unique_urls
+        ]
+    )
+
+    components.html(
+        f"""
+        <datalist id="pastUrls">
+            {options_html}
+        </datalist>
+        """,
+        height=0,
+        width=0
+    )
+
+
+# =====================================================
+# PROCESS ARTICLE
 # =====================================================
 
 if submitted:
+
     cleaned_url = url_input.strip()
 
+    # -------------------------------------------------
+    # Validate URL
+    # -------------------------------------------------
+
     if not cleaned_url:
-        st.warning("⚠️ Please paste a news article link.")
+
+        st.warning(
+            "⚠️ Please paste a news article URL."
+        )
+
         st.stop()
 
-    if not cleaned_url.startswith(("http://", "https://")):
+    if not cleaned_url.startswith(
+        ("http://", "https://")
+    ):
+
         cleaned_url = "https://" + cleaned_url
 
     st.session_state.current_url = cleaned_url
 
+
+    # -------------------------------------------------
+    # Check cache/history
+    # -------------------------------------------------
+
     cached_entry = next(
-        (item for item in st.session_state.history if item.get("url") == cleaned_url),
-        None,
+        (
+            item
+            for item in st.session_state.history
+            if item.get("url") == cleaned_url
+        ),
+        None
     )
 
-    if cached_entry and cached_entry.get("summary"):
-        st.session_state.current_summary = cached_entry["summary"]
+    if (
+        cached_entry
+        and cached_entry.get("summary")
+    ):
+
+        st.session_state.current_summary = (
+            cached_entry.get(
+                "summary",
+                ""
+            )
+        )
+
+        st.info(
+            "⚡ Loaded summary from recent history."
+        )
+
         st.rerun()
 
+
+    # -------------------------------------------------
+    # Extract article
+    # -------------------------------------------------
+
     extraction_start = time.perf_counter()
-    with st.spinner("🔎 Extracting article..."):
+
+    with st.spinner(
+        "🔎 Extracting article..."
+    ):
+
         try:
-            article_text = extract_article(cleaned_url)
-        except Exception:
+
+            article_text = extract_article(
+                cleaned_url
+            )
+
+        except Exception as e:
+
             article_text = None
-    extraction_time = time.perf_counter() - extraction_start
+
+            st.error(
+                f"Extraction error: {e}"
+            )
+
+    extraction_time = (
+        time.perf_counter()
+        - extraction_start
+    )
+
+
+    # -------------------------------------------------
+    # Extraction failed
+    # -------------------------------------------------
 
     if not article_text:
-        st.error("❌ Unable to extract the article from this website.")
-        st.info("The publisher is blocking automated access. Please try another link.")
-        with st.expander("🛠️ Debug details", expanded=True):
-            st.code("\n".join(DEBUG_LOG) or "No debug info")
+
+        st.error(
+            "❌ Unable to extract the article from this website."
+        )
+
+        st.info(
+            "The publisher may be blocking automated scrapers. "
+            "Please try another link."
+        )
+
         st.stop()
+
+
+    # -------------------------------------------------
+    # Check article length
+    # -------------------------------------------------
 
     if len(article_text.strip()) < 300:
-        st.error("❌ The extracted text is too short to generate a reliable summary.")
+
+        st.error(
+            "❌ The extracted article text is too short "
+            "to generate a reliable summary."
+        )
+
         st.stop()
 
-    st.success(f"✓ Article extracted in {extraction_time:.2f} seconds")
+
+    st.success(
+        f"✓ Article extracted successfully "
+        f"in {extraction_time:.2f} seconds"
+    )
+
+
+    # -------------------------------------------------
+    # Generate summary
+    # -------------------------------------------------
 
     st.subheader("✨ Summary")
+
     summary_placeholder = st.empty()
+
     complete_summary = ""
+
     summary_start = time.perf_counter()
 
     try:
-        with st.spinner("🤖 Generating summary..."):
-            for chunk in generate_summary(article_text):
+
+        with st.spinner(
+            "🤖 Generating summary..."
+        ):
+
+            for chunk in generate_summary(
+                article_text
+            ):
+
                 complete_summary += chunk
-                summary_placeholder.markdown(complete_summary)
 
-        summary_time = time.perf_counter() - summary_start
-        st.success(f"✓ Summary generated in {summary_time:.2f} seconds")
+                summary_placeholder.markdown(
+                    complete_summary
+                )
 
-        first_line = complete_summary.strip().split("\n")[0].replace("*", "").replace("#", "").strip()
-        headline = first_line if first_line else cleaned_url
+
+        summary_time = (
+            time.perf_counter()
+            - summary_start
+        )
+
+
+        st.success(
+            f"✓ Summary generated in "
+            f"{summary_time:.2f} seconds"
+        )
+
+
+        # -------------------------------------------------
+        # Create headline
+        # -------------------------------------------------
+
+        first_line = (
+            complete_summary
+            .strip()
+            .split("\n")[0]
+            .replace("*", "")
+            .replace("#", "")
+            .strip()
+        )
+
+        headline = (
+            first_line
+            if first_line
+            else cleaned_url
+        )
+
+
+        # -------------------------------------------------
+        # Save history
+        # -------------------------------------------------
 
         st.session_state.history.append(
-            {"title": headline, "url": cleaned_url, "summary": complete_summary}
+            {
+                "title": headline,
+                "url": cleaned_url,
+                "summary": complete_summary
+            }
         )
-        st.session_state.current_summary = complete_summary
+
+        st.session_state.current_summary = (
+            complete_summary
+        )
+
         st.rerun()
 
+
     except Exception as e:
-        st.error("❌ Failed to generate the summary.")
-        st.caption(f"Error: {e}")
-        st.info("Please check your GROQ_API_KEY in `.streamlit/secrets.toml`.")
+
+        st.error(
+            "❌ Failed to generate the summary."
+        )
+
+        st.caption(
+            f"Error: {e}"
+        )
+
+        st.info(
+            "Please verify your GROQ_API_KEY "
+            "inside `.streamlit/secrets.toml`."
+        )
+
         st.stop()
 
 
 # =====================================================
-# DISPLAY ACTIVE SUMMARY
+# DISPLAY CURRENT SUMMARY
 # =====================================================
 
-if st.session_state.current_summary and not submitted:
+if (
+    st.session_state.current_summary
+    and not submitted
+):
+
     st.subheader("✨ Summary")
-    st.markdown(st.session_state.current_summary)
+
+    st.markdown(
+        st.session_state.current_summary
+    )
 
     st.download_button(
         label="⬇️ Download Summary",
         data=st.session_state.current_summary,
         file_name="news_summary.txt",
         mime="text/plain",
-        use_container_width=True,
+        use_container_width=True
     )
