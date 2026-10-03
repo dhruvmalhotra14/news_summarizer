@@ -113,42 +113,6 @@ with st.form(
 
 
 # =====================================================
-# PAST URLS
-# =====================================================
-
-past_unique_urls = list(
-    dict.fromkeys(
-        [
-            item.get("url")
-            for item in reversed(
-                st.session_state.history
-            )
-            if item.get("url")
-        ]
-    )
-)
-
-if past_unique_urls:
-
-    options_html = "".join(
-        [
-            f"<option value='{u}'></option>"
-            for u in past_unique_urls
-        ]
-    )
-
-    st.iframe(
-        srcdoc=f"""
-        <datalist id="pastUrls">
-            {options_html}
-        </datalist>
-        """,
-        height=0,
-        width=0
-    )
-
-
-# =====================================================
 # PROCESS ARTICLE
 # =====================================================
 
