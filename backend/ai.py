@@ -3,7 +3,6 @@ from groq import Groq
 
 from prompt import summary_prompt
 
-
 def generate_summary(article_text: str):
     # Read API key from Streamlit secrets
     api_key = st.secrets.get("GROQ_API_KEY")

@@ -5,7 +5,6 @@ import streamlit as st
 from extractor import extract_article
 from ai import generate_summary
 
-
 # ============================================================
 # PAGE CONFIGURATION
 # ============================================================
