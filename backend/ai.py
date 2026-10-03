@@ -5,16 +5,19 @@ from prompt import summary_prompt
 
 
 def generate_summary(article_text: str):
-    api_key = st.secrets["GROQ_API_KEY"]
+    # Read API key from Streamlit secrets
+    api_key = st.secrets.get("GROQ_API_KEY")
 
-    client = Groq(
-        api_key=api_key
-    )
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is missing from Streamlit secrets.")
 
-    prompt = summary_prompt(
-        article_text[:4000]
-    )
+    # Create Groq client
+    client = Groq(api_key=api_key)
 
+    # Create prompt
+    prompt = summary_prompt(article_text[:4000])
+
+    # Generate streaming response
     completion = client.chat.completions.create(
         model="openai/gpt-oss-120b",
         messages=[
@@ -28,8 +31,10 @@ def generate_summary(article_text: str):
     )
 
     for chunk in completion:
-        if chunk.choices:
-            delta = chunk.choices[0].delta.content
+        if not chunk.choices:
+            continue
 
-            if delta:
-                yield delta
+        content = chunk.choices[0].delta.content
+
+        if content:
+            yield content
