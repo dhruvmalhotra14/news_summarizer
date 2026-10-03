@@ -1,5 +1,6 @@
 ﻿import json
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 import trafilatura
@@ -36,10 +37,6 @@ def _is_error_payload(text: str) -> bool:
 
 
 def _extract_from_json_ld(soup: BeautifulSoup) -> str:
-    """
-    Try extracting articleBody from JSON-LD metadata.
-    """
-
     for script in soup.find_all(
         "script",
         type="application/ld+json"
@@ -48,43 +45,23 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> str:
             continue
 
         try:
-            data = json.loads(
-                script.string.strip()
-            )
+            data = json.loads(script.string.strip())
 
-            items = (
-                data
-                if isinstance(data, list)
-                else [data]
-            )
+            items = data if isinstance(data, list) else [data]
 
             for item in items:
-
                 if not isinstance(item, dict):
                     continue
 
-                # Direct articleBody
                 if item.get("articleBody"):
                     return item["articleBody"].strip()
 
-                # @graph articleBody
-                for graph_item in item.get(
-                    "@graph",
-                    []
-                ):
-
+                for graph_item in item.get("@graph", []):
                     if (
-                        isinstance(
-                            graph_item,
-                            dict
-                        )
-                        and graph_item.get(
-                            "articleBody"
-                        )
+                        isinstance(graph_item, dict)
+                        and graph_item.get("articleBody")
                     ):
-                        return graph_item[
-                            "articleBody"
-                        ].strip()
+                        return graph_item["articleBody"].strip()
 
         except Exception:
             continue
@@ -92,15 +69,8 @@ def _extract_from_json_ld(soup: BeautifulSoup) -> str:
     return ""
 
 
-def _extract_soup_paragraphs(
-    soup: BeautifulSoup
-) -> str:
-    """
-    Extract article paragraphs using
-    common HTML containers.
-    """
+def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
 
-    # Remove unwanted elements
     for tag in soup([
         "script",
         "style",
@@ -112,44 +82,27 @@ def _extract_soup_paragraphs(
     ]):
         tag.decompose()
 
-    # Try known article containers
     container = soup.find(
         "div",
         class_=re.compile(
-            r"(story-details|full-details|"
-            r"story_details|ie-content|"
-            r"art-content|wp-block-post-content|"
-            r"article-body|storycontent)",
+            r"(story-details|full-details|story_details|ie-content|"
+            r"art-content|wp-block-post-content|article-body|storycontent)",
             re.IGNORECASE,
         ),
     )
 
-    # Try article tag
     if not container:
-        container = soup.find(
-            "article"
-        )
+        container = soup.find("article")
 
-    # Try main tag
     if not container:
-        container = soup.find(
-            "main"
-        )
+        container = soup.find("main")
 
-    target = (
-        container
-        if container
-        else soup
-    )
+    target = container if container else soup
 
     paragraphs = []
 
     for p in target.find_all("p"):
-
-        text = p.get_text(
-            " ",
-            strip=True
-        )
+        text = p.get_text(" ", strip=True)
 
         if len(text) <= 35:
             continue
@@ -171,32 +124,49 @@ def _extract_soup_paragraphs(
         paragraphs.append(text)
 
     if len(paragraphs) >= 2:
-
-        return "\n\n".join(
-            paragraphs
-        )
+        return "\n\n".join(paragraphs)
 
     return ""
 
 
-def _fetch_indian_express_direct(
-    url: str
-) -> str:
+def _indian_express_lite_url(url: str) -> str:
     """
-    Extract Indian Express article directly
-    from the webpage.
+    Convert:
 
-    This does NOT assume that the number
-    at the end of the URL is a WordPress
-    post ID.
+    https://indianexpress.com/article/india/example/
+
+    into:
+
+    https://indianexpress.com/article/india/example/lite/
     """
 
-    print(
-        "Trying Indian Express direct extraction..."
+    parts = urlsplit(url)
+
+    path = parts.path.rstrip("/")
+
+    if not path.endswith("/lite"):
+        path += "/lite"
+
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            path + "/",
+            parts.query,
+            parts.fragment,
+        )
     )
 
-    try:
 
+def _extract_indian_express_page(
+    url: str,
+    label: str = "Indian Express"
+) -> str:
+
+    print(f"Trying {label} extraction...")
+    print("URL:", url)
+
+    try:
         response = curl_requests.get(
             url,
             impersonate="chrome120",
@@ -208,9 +178,9 @@ def _fetch_indian_express_direct(
                     "application/xml;q=0.9,image/avif,"
                     "image/webp,*/*;q=0.8"
                 ),
-                "Accept-Language": (
-                    "en-US,en;q=0.9"
-                ),
+                "Accept-Language": "en-US,en;q=0.9",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 "
@@ -220,10 +190,7 @@ def _fetch_indian_express_direct(
             },
         )
 
-        print(
-            "Indian Express page status:",
-            response.status_code
-        )
+        print(f"{label} page status:", response.status_code)
 
         if response.status_code != 200:
             return ""
@@ -233,11 +200,8 @@ def _fetch_indian_express_direct(
         if not html:
             return ""
 
-        # Check if we received an error page
         if _is_error_payload(html):
-            print(
-                "Indian Express returned an error page."
-            )
+            print(f"{label} returned an error page.")
             return ""
 
         soup = BeautifulSoup(
@@ -245,40 +209,24 @@ def _fetch_indian_express_direct(
             "html.parser"
         )
 
-        # --------------------------------------------------
-        # METHOD 1: JSON-LD
-        # --------------------------------------------------
+        # 1. JSON-LD
 
-        json_ld = _extract_from_json_ld(
-            soup
-        )
+        json_ld = _extract_from_json_ld(soup)
 
-        if (
-            json_ld
-            and not _is_error_payload(
-                json_ld
-            )
-        ):
-
+        if json_ld and not _is_error_payload(json_ld):
             print(
-                "Indian Express JSON-LD "
-                "extraction successful."
+                f"{label} JSON-LD extraction successful."
             )
 
-            return _clean_text(
-                json_ld
-            )
+            return _clean_text(json_ld)
 
-        # --------------------------------------------------
-        # METHOD 2: Known Indian Express containers
-        # --------------------------------------------------
+        # 2. Known article containers
 
         containers = soup.find_all(
             "div",
             class_=re.compile(
-                r"(story-details|full-details|"
-                r"ie-content|article-body|"
-                r"storycontent|story_details|"
+                r"(story-details|full-details|ie-content|"
+                r"article-body|storycontent|story_details|"
                 r"art-content)",
                 re.IGNORECASE,
             ),
@@ -288,9 +236,7 @@ def _fetch_indian_express_direct(
 
             paragraphs = []
 
-            for p in container.find_all(
-                "p"
-            ):
+            for p in container.find_all("p"):
 
                 text = p.get_text(
                     " ",
@@ -312,16 +258,12 @@ def _fetch_indian_express_direct(
                 ):
                     continue
 
-                paragraphs.append(
-                    text
-                )
+                paragraphs.append(text)
 
             if paragraphs:
 
-                article_text = (
-                    "\n\n".join(
-                        paragraphs
-                    )
+                article_text = "\n\n".join(
+                    paragraphs
                 )
 
                 article_text = _clean_text(
@@ -331,155 +273,161 @@ def _fetch_indian_express_direct(
                 if not _is_error_payload(
                     article_text
                 ):
-
                     print(
-                        "Indian Express HTML "
-                        "container extraction successful."
-                    )
-
-                    return article_text
-
-        # --------------------------------------------------
-        # METHOD 3: <article> / <main>
-        # --------------------------------------------------
-
-        container = soup.find(
-            "article"
-        )
-
-        if not container:
-            container = soup.find(
-                "main"
-            )
-
-        if container:
-
-            paragraphs = []
-
-            for p in container.find_all(
-                "p"
-            ):
-
-                text = p.get_text(
-                    " ",
-                    strip=True
-                )
-
-                if len(text) <= 35:
-                    continue
-
-                if text.startswith(
-                    (
-                        "Also Read",
-                        "Click here",
-                        "Subscribe",
-                        "Follow us",
-                        "Read More",
-                        "Advertisement",
-                    )
-                ):
-                    continue
-
-                paragraphs.append(
-                    text
-                )
-
-            if paragraphs:
-
-                article_text = (
-                    "\n\n".join(
-                        paragraphs
-                    )
-                )
-
-                article_text = _clean_text(
-                    article_text
-                )
-
-                if not _is_error_payload(
-                    article_text
-                ):
-
-                    print(
-                        "Indian Express article/main "
+                        f"{label} HTML container "
                         "extraction successful."
                     )
 
                     return article_text
 
-        # --------------------------------------------------
-        # METHOD 4: General paragraph extraction
-        # --------------------------------------------------
+        # 3. <article>
 
-        dom = _extract_soup_paragraphs(
-            soup
-        )
+        container = soup.find("article")
 
-        if (
-            dom
-            and not _is_error_payload(dom)
-        ):
+        if not container:
+            container = soup.find("main")
+
+        if container:
+
+            paragraphs = []
+
+            for p in container.find_all("p"):
+
+                text = p.get_text(
+                    " ",
+                    strip=True
+                )
+
+                if len(text) <= 35:
+                    continue
+
+                if text.startswith(
+                    (
+                        "Also Read",
+                        "Click here",
+                        "Subscribe",
+                        "Follow us",
+                        "Read More",
+                        "Advertisement",
+                    )
+                ):
+                    continue
+
+                paragraphs.append(text)
+
+            if paragraphs:
+
+                article_text = "\n\n".join(
+                    paragraphs
+                )
+
+                article_text = _clean_text(
+                    article_text
+                )
+
+                if not _is_error_payload(
+                    article_text
+                ):
+                    print(
+                        f"{label} article/main "
+                        "extraction successful."
+                    )
+
+                    return article_text
+
+        # 4. General paragraph extraction
+
+        dom = _extract_soup_paragraphs(soup)
+
+        if dom and not _is_error_payload(dom):
 
             print(
-                "Indian Express general "
-                "paragraph extraction successful."
+                f"{label} general paragraph "
+                "extraction successful."
             )
 
-            return _clean_text(
-                dom
-            )
+            return _clean_text(dom)
 
     except Exception as e:
 
         print(
-            "Indian Express direct "
-            "extraction error:",
+            f"{label} extraction error:",
             e
         )
 
     return ""
 
 
-def extract_article(url: str) -> str:
-    """
-    Main article extraction function.
+def _fetch_indian_express_direct(url: str) -> str:
 
-    Uses a special extractor for Indian Express
-    and normal extraction methods for other sites.
-    """
+    print("Indian Express detected.")
+
+    # Attempt 1: Normal article
+
+    article_text = _extract_indian_express_page(
+        url,
+        "Indian Express direct"
+    )
+
+    if article_text:
+        return article_text
+
+    print(
+        "Indian Express direct extraction failed."
+    )
+
+    # Attempt 2: /lite/ version
+
+    lite_url = _indian_express_lite_url(url)
+
+    if lite_url != url:
+
+        print(
+            "Trying Indian Express /lite/ fallback..."
+        )
+
+        article_text = _extract_indian_express_page(
+            lite_url,
+            "Indian Express /lite/"
+        )
+
+        if article_text:
+
+            print(
+                "Indian Express /lite/ "
+                "extraction successful."
+            )
+
+            return article_text
+
+    print(
+        "Indian Express /lite/ extraction failed."
+    )
+
+    return ""
+
+
+def extract_article(url: str) -> str:
 
     clean_url = url.strip()
 
-    # ==================================================
-    # INDIAN EXPRESS SPECIAL EXTRACTION
-    # ==================================================
+    # INDIAN EXPRESS
 
-    if (
-        "indianexpress.com"
-        in clean_url.lower()
-    ):
+    if "indianexpress.com" in clean_url.lower():
 
-        print(
-            "Indian Express detected."
-        )
-
-        ie_text = (
-            _fetch_indian_express_direct(
-                clean_url
-            )
+        ie_text = _fetch_indian_express_direct(
+            clean_url
         )
 
         if ie_text:
             return ie_text
 
         print(
-            "Indian Express direct "
-            "extraction failed."
+            "Indian Express extraction "
+            "completely failed."
         )
 
-    # ==================================================
-    # NORMAL EXTRACTION
-    # ==================================================
+    # STANDARD WEBSITE EXTRACTION
 
     try:
 
@@ -488,12 +436,8 @@ def extract_article(url: str) -> str:
             impersonate="chrome120",
             timeout=10,
             headers={
-                "Referer": (
-                    "https://www.google.com/"
-                ),
-                "Accept-Language": (
-                    "en-US,en;q=0.9"
-                ),
+                "Referer": "https://www.google.com/",
+                "Accept-Language": "en-US,en;q=0.9",
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 "
@@ -515,30 +459,26 @@ def extract_article(url: str) -> str:
                 "html.parser"
             )
 
-            # ------------------------------------------
-            # JSON-LD extraction
-            # ------------------------------------------
+            # JSON-LD
 
-            json_ld = (
-                _extract_from_json_ld(
-                    soup
-                )
+            json_ld = _extract_from_json_ld(
+                soup
             )
 
             if (
                 json_ld
-                and not _is_error_payload(
-                    json_ld
-                )
+                and not _is_error_payload(json_ld)
             ):
+
+                print(
+                    "JSON-LD extraction successful."
+                )
 
                 return _clean_text(
                     json_ld
                 )
 
-            # ------------------------------------------
-            # Trafilatura extraction
-            # ------------------------------------------
+            # Trafilatura
 
             traf = trafilatura.extract(
                 response.text,
@@ -547,35 +487,31 @@ def extract_article(url: str) -> str:
 
             if (
                 traf
-                and not _is_error_payload(
-                    traf
-                )
+                and not _is_error_payload(traf)
             ):
 
-                return _clean_text(
-                    traf
+                print(
+                    "Trafilatura extraction successful."
                 )
 
-            # ------------------------------------------
-            # BeautifulSoup extraction
-            # ------------------------------------------
+                return _clean_text(traf)
 
-            dom = (
-                _extract_soup_paragraphs(
-                    soup
-                )
+            # BeautifulSoup
+
+            dom = _extract_soup_paragraphs(
+                soup
             )
 
             if (
                 dom
-                and not _is_error_payload(
-                    dom
-                )
+                and not _is_error_payload(dom)
             ):
 
-                return _clean_text(
-                    dom
+                print(
+                    "BeautifulSoup extraction successful."
                 )
+
+                return _clean_text(dom)
 
     except Exception as e:
 
@@ -584,11 +520,13 @@ def extract_article(url: str) -> str:
             e
         )
 
-    # ==================================================
     # TRAFILATURA FALLBACK
-    # ==================================================
 
     try:
+
+        print(
+            "Trying Trafilatura fetch fallback..."
+        )
 
         html = trafilatura.fetch_url(
             clean_url
@@ -603,14 +541,15 @@ def extract_article(url: str) -> str:
 
             if (
                 traf
-                and not _is_error_payload(
-                    traf
-                )
+                and not _is_error_payload(traf)
             ):
 
-                return _clean_text(
-                    traf
+                print(
+                    "Trafilatura fallback "
+                    "successful."
                 )
+
+                return _clean_text(traf)
 
     except Exception as e:
 
