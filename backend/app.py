@@ -95,6 +95,7 @@ st.markdown(
 
 st.subheader("🔗 Article Input")
 
+
 with st.form(
     "news_summary_form",
     clear_on_submit=False
@@ -118,6 +119,10 @@ with st.form(
 
 if submitted:
 
+    # --------------------------------------------------------
+    # Clean URL
+    # --------------------------------------------------------
+
     cleaned_url = url_input.strip()
 
     # --------------------------------------------------------
@@ -132,13 +137,17 @@ if submitted:
 
         st.stop()
 
+    # --------------------------------------------------------
     # Add HTTPS if missing
+    # --------------------------------------------------------
 
     if not cleaned_url.startswith(
         ("http://", "https://")
     ):
 
         cleaned_url = "https://" + cleaned_url
+
+    # Save URL
 
     st.session_state.current_url = cleaned_url
 
@@ -160,19 +169,29 @@ if submitted:
 
         except Exception as e:
 
-            article_text = None
+            article_text = ""
 
             st.error(
-                "❌ An error occurred while extracting the article."
+                "❌ Extraction error."
             )
 
-            st.caption(
-                f"Error: {e}"
-            )
+            st.exception(e)
 
     extraction_time = (
         time.perf_counter()
         - extraction_start
+    )
+
+    # --------------------------------------------------------
+    # Debug: show extracted character count
+    # --------------------------------------------------------
+
+    extracted_length = len(
+        article_text or ""
+    )
+
+    st.write(
+        f"Extracted characters: {extracted_length}"
     )
 
     # --------------------------------------------------------
@@ -186,24 +205,34 @@ if submitted:
         )
 
         st.info(
-            "This publisher may be blocking automated "
-            "requests from the server. Please try another "
-            "news article URL."
+            "The website returned no usable article text."
         )
 
         st.stop()
 
     # --------------------------------------------------------
-    # Article Too Short
+    # Clean extracted text
     # --------------------------------------------------------
 
     article_text = article_text.strip()
 
-    if len(article_text) < 300:
+    extracted_length = len(
+        article_text
+    )
+
+    # --------------------------------------------------------
+    # Article Too Short
+    # --------------------------------------------------------
+
+    if extracted_length < 300:
 
         st.error(
             "❌ The extracted article text is too short "
             "to generate a reliable summary."
+        )
+
+        st.write(
+            f"Extracted characters: {extracted_length}"
         )
 
         st.stop()
@@ -251,6 +280,18 @@ if submitted:
         )
 
         # ----------------------------------------------------
+        # Check Summary
+        # ----------------------------------------------------
+
+        if not complete_summary.strip():
+
+            st.error(
+                "❌ The AI model returned an empty summary."
+            )
+
+            st.stop()
+
+        # ----------------------------------------------------
         # Summary Generated
         # ----------------------------------------------------
 
@@ -279,7 +320,7 @@ if submitted:
         )
 
         # ----------------------------------------------------
-        # Save History
+        # Save Summary to History
         # ----------------------------------------------------
 
         st.session_state.history.append(
@@ -290,12 +331,16 @@ if submitted:
             }
         )
 
+        # ----------------------------------------------------
+        # Save Current Summary
+        # ----------------------------------------------------
+
         st.session_state.current_summary = (
             complete_summary
         )
 
         # ----------------------------------------------------
-        # Refresh
+        # Refresh Page
         # ----------------------------------------------------
 
         st.rerun()
@@ -306,9 +351,7 @@ if submitted:
             "❌ Failed to generate the summary."
         )
 
-        st.caption(
-            f"Error: {e}"
-        )
+        st.exception(e)
 
         st.info(
             "Please verify your GROQ_API_KEY "
