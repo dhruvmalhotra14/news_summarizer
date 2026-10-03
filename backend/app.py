@@ -12,7 +12,7 @@ import time
 
 import streamlit as st
 
-from backend.extractor import extract_article
+from backend.article_extractor import extract_article
 from backend.ai import generate_summary
 # ============================================================
 # PAGE CONFIGURATION
