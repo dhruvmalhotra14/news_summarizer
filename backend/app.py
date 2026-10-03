@@ -1,7 +1,6 @@
 import time
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from extractor import extract_article
 from ai import generate_summary
@@ -138,8 +137,8 @@ if past_unique_urls:
         ]
     )
 
-    components.html(
-        f"""
+    st.iframe(
+        srcdoc=f"""
         <datalist id="pastUrls">
             {options_html}
         </datalist>
