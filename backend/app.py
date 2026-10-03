@@ -6,9 +6,9 @@ from extractor import extract_article
 from ai import generate_summary
 
 
-# -----------------------------
-# Page Configuration
-# -----------------------------
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
 
 st.set_page_config(
     page_title="News Summarizer",
@@ -17,9 +17,9 @@ st.set_page_config(
 )
 
 
-# -----------------------------
-# Session State
-# -----------------------------
+# ============================================================
+# SESSION STATE
+# ============================================================
 
 if "history" not in st.session_state:
     st.session_state.history = []
@@ -31,9 +31,9 @@ if "current_url" not in st.session_state:
     st.session_state.current_url = ""
 
 
-# -----------------------------
-# Sidebar
-# -----------------------------
+# ============================================================
+# SIDEBAR
+# ============================================================
 
 with st.sidebar:
 
@@ -60,7 +60,9 @@ with st.sidebar:
 
     else:
 
-        st.info("No summaries generated yet.")
+        st.info(
+            "No summaries generated yet."
+        )
 
     st.markdown("---")
 
@@ -76,23 +78,22 @@ with st.sidebar:
         st.rerun()
 
 
-# -----------------------------
-# Main Page
-# -----------------------------
+# ============================================================
+# MAIN PAGE
+# ============================================================
 
 st.title("📰 News Summarizer")
 
 st.markdown(
-    "Enter a news article URL and generate a concise summary."
+    "Enter a news article URL and generate a concise AI summary."
 )
 
 
-# -----------------------------
-# Article Input
-# -----------------------------
+# ============================================================
+# ARTICLE INPUT
+# ============================================================
 
 st.subheader("🔗 Article Input")
-
 
 with st.form(
     "news_summary_form",
@@ -111,18 +112,17 @@ with st.form(
     )
 
 
-# -----------------------------
-# Generate Summary
-# -----------------------------
+# ============================================================
+# GENERATE SUMMARY
+# ============================================================
 
 if submitted:
 
     cleaned_url = url_input.strip()
 
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Validate URL
-    # -----------------------------
+    # --------------------------------------------------------
 
     if not cleaned_url:
 
@@ -132,7 +132,6 @@ if submitted:
 
         st.stop()
 
-
     # Add HTTPS if missing
 
     if not cleaned_url.startswith(
@@ -141,25 +140,13 @@ if submitted:
 
         cleaned_url = "https://" + cleaned_url
 
-
     st.session_state.current_url = cleaned_url
 
-
-    # IMPORTANT:
-    # There is NO history/cache check here.
-    #
-    # Every time the user clicks
-    # "Generate Summary", the article
-    # will be extracted again.
-    # -----------------------------
-
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Extract Article
-    # -----------------------------
+    # --------------------------------------------------------
 
     extraction_start = time.perf_counter()
-
 
     with st.spinner(
         "🔎 Extracting article..."
@@ -176,39 +163,43 @@ if submitted:
             article_text = None
 
             st.error(
-                f"Extraction error: {e}"
+                "❌ An error occurred while extracting the article."
             )
 
+            st.caption(
+                f"Error: {e}"
+            )
 
     extraction_time = (
         time.perf_counter()
         - extraction_start
     )
 
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Extraction Failed
-    # -----------------------------
+    # --------------------------------------------------------
 
     if not article_text:
 
         st.error(
-            "❌ Unable to extract the article from this website."
+            "❌ Unable to extract this article."
         )
 
         st.info(
-            "The publisher may be blocking automated scrapers. "
-            "Please try another link."
+            "This publisher may be blocking automated "
+            "requests from the server. Please try another "
+            "news article URL."
         )
 
         st.stop()
 
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Article Too Short
-    # -----------------------------
+    # --------------------------------------------------------
 
-    if len(article_text.strip()) < 300:
+    article_text = article_text.strip()
+
+    if len(article_text) < 300:
 
         st.error(
             "❌ The extracted article text is too short "
@@ -217,20 +208,18 @@ if submitted:
 
         st.stop()
 
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Extraction Successful
-    # -----------------------------
+    # --------------------------------------------------------
 
     st.success(
         f"✓ Article extracted successfully "
         f"in {extraction_time:.2f} seconds"
     )
 
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Generate AI Summary
-    # -----------------------------
+    # --------------------------------------------------------
 
     st.subheader("✨ Summary")
 
@@ -239,7 +228,6 @@ if submitted:
     complete_summary = ""
 
     summary_start = time.perf_counter()
-
 
     try:
 
@@ -257,26 +245,23 @@ if submitted:
                     complete_summary
                 )
 
-
         summary_time = (
             time.perf_counter()
             - summary_start
         )
 
-
-        # -----------------------------
+        # ----------------------------------------------------
         # Summary Generated
-        # -----------------------------
+        # ----------------------------------------------------
 
         st.success(
             f"✓ Summary generated in "
             f"{summary_time:.2f} seconds"
         )
 
-
-        # -----------------------------
+        # ----------------------------------------------------
         # Create History Title
-        # -----------------------------
+        # ----------------------------------------------------
 
         first_line = (
             complete_summary
@@ -287,17 +272,15 @@ if submitted:
             .strip()
         )
 
-
         headline = (
             first_line
             if first_line
             else cleaned_url
         )
 
-
-        # -----------------------------
-        # Save Summary to History
-        # -----------------------------
+        # ----------------------------------------------------
+        # Save History
+        # ----------------------------------------------------
 
         st.session_state.history.append(
             {
@@ -307,18 +290,15 @@ if submitted:
             }
         )
 
-
-        # Save current summary
-
         st.session_state.current_summary = (
             complete_summary
         )
 
-
-        # Refresh page
+        # ----------------------------------------------------
+        # Refresh
+        # ----------------------------------------------------
 
         st.rerun()
-
 
     except Exception as e:
 
@@ -338,9 +318,9 @@ if submitted:
         st.stop()
 
 
-# -----------------------------
-# Display Existing Summary
-# -----------------------------
+# ============================================================
+# DISPLAY EXISTING SUMMARY
+# ============================================================
 
 if (
     st.session_state.current_summary
@@ -353,10 +333,9 @@ if (
         st.session_state.current_summary
     )
 
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Download Summary
-    # -----------------------------
+    # --------------------------------------------------------
 
     st.download_button(
         label="⬇️ Download Summary",

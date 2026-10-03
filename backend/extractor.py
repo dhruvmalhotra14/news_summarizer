@@ -1,563 +1,841 @@
 ﻿import json
 import re
-
 from urllib.parse import urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 import trafilatura
+
 from curl_cffi import requests as curl_requests
 
 
-def _clean_text(text: str) -> str:
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+REQUEST_TIMEOUT = 20
+
+MIN_ARTICLE_LENGTH = 300
+
+
+# ============================================================
+# URL HELPERS
+# ============================================================
+
+def clean_url(url: str) -> str:
+
+    url = url.strip()
+
+    parts = urlsplit(url)
+
+    cleaned = urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            parts.query,
+            ""
+        )
+    )
+
+    return cleaned
+
+
+def get_domain(url: str) -> str:
+
+    return (
+        urlsplit(url)
+        .netloc
+        .lower()
+        .replace("www.", "")
+    )
+
+
+# ============================================================
+# HTML CLEANING
+# ============================================================
+
+def clean_text(text: str) -> str:
+
     if not text:
         return ""
 
-    text = re.sub(r"\n\s*\n+", "\n\n", text)
+    text = text.replace("\xa0", " ")
+
+    text = re.sub(
+        r"\r\n?",
+        "\n",
+        text
+    )
+
+    text = re.sub(
+        r"[ \t]+",
+        " ",
+        text
+    )
+
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        text
+    )
 
     return text.strip()
 
 
-def _is_error_payload(text: str) -> bool:
-    if not text or len(text.strip()) < 200:
-        return True
+# ============================================================
+# JSON-LD EXTRACTION
+# ============================================================
 
-    lower = text.lower()
+def extract_json_ld(
+    soup: BeautifulSoup
+) -> str:
 
-    error_markers = [
-        "403 forbidden",
-        "404 not found",
-        "cloudfront",
-        "request could not be satisfied",
-        "access denied",
-        "attention required",
-        "robot or human",
-        "enable javascript",
-        "just a moment...",
-    ]
-
-    return any(marker in lower for marker in error_markers)
-
-
-def _extract_from_json_ld(soup: BeautifulSoup) -> str:
-    for script in soup.find_all(
+    scripts = soup.find_all(
         "script",
         type="application/ld+json"
-    ):
-        if not script.string:
+    )
+
+    for script in scripts:
+
+        raw = script.string
+
+        if not raw:
             continue
 
         try:
-            data = json.loads(script.string.strip())
 
-            items = data if isinstance(data, list) else [data]
-
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-
-                if item.get("articleBody"):
-                    return item["articleBody"].strip()
-
-                for graph_item in item.get("@graph", []):
-                    if (
-                        isinstance(graph_item, dict)
-                        and graph_item.get("articleBody")
-                    ):
-                        return graph_item["articleBody"].strip()
+            data = json.loads(raw)
 
         except Exception:
+
             continue
+
+        candidates = []
+
+        if isinstance(data, dict):
+
+            candidates.append(data)
+
+            graph = data.get("@graph")
+
+            if isinstance(graph, list):
+
+                candidates.extend(graph)
+
+        elif isinstance(data, list):
+
+            candidates.extend(data)
+
+        for item in candidates:
+
+            if not isinstance(item, dict):
+                continue
+
+            article_body = item.get(
+                "articleBody"
+            )
+
+            if (
+                isinstance(article_body, str)
+                and len(article_body.strip()) >= MIN_ARTICLE_LENGTH
+            ):
+
+                return clean_text(
+                    article_body
+                )
 
     return ""
 
 
-def _extract_soup_paragraphs(soup: BeautifulSoup) -> str:
+# ============================================================
+# ARTICLE CONTAINER EXTRACTION
+# ============================================================
 
-    for tag in soup([
-        "script",
-        "style",
-        "nav",
-        "header",
-        "footer",
-        "aside",
-        "form",
-    ]):
+def extract_from_article_tag(
+    soup: BeautifulSoup
+) -> str:
+
+    article = soup.find("article")
+
+    if not article:
+
+        return ""
+
+    # Remove unwanted elements
+
+    for tag in article.find_all(
+        [
+            "script",
+            "style",
+            "noscript",
+            "nav",
+            "footer",
+            "header",
+            "aside",
+            "form"
+        ]
+    ):
+
         tag.decompose()
-
-    container = soup.find(
-        "div",
-        class_=re.compile(
-            r"(story-details|full-details|story_details|ie-content|"
-            r"art-content|wp-block-post-content|article-body|storycontent)",
-            re.IGNORECASE,
-        ),
-    )
-
-    if not container:
-        container = soup.find("article")
-
-    if not container:
-        container = soup.find("main")
-
-    target = container if container else soup
 
     paragraphs = []
 
-    for p in target.find_all("p"):
-        text = p.get_text(" ", strip=True)
+    for p in article.find_all(
+        ["p", "h1", "h2", "h3"]
+    ):
 
-        if len(text) <= 35:
+        text = p.get_text(
+            " ",
+            strip=True
+        )
+
+        if len(text) >= 30:
+
+            paragraphs.append(text)
+
+    return clean_text(
+        "\n\n".join(paragraphs)
+    )
+
+
+# ============================================================
+# MAIN CONTENT EXTRACTION
+# ============================================================
+
+def extract_from_main(
+    soup: BeautifulSoup
+) -> str:
+
+    main = soup.find("main")
+
+    if not main:
+
+        return ""
+
+    for tag in main.find_all(
+        [
+            "script",
+            "style",
+            "noscript",
+            "nav",
+            "footer",
+            "header",
+            "aside",
+            "form"
+        ]
+    ):
+
+        tag.decompose()
+
+    paragraphs = []
+
+    for p in main.find_all("p"):
+
+        text = p.get_text(
+            " ",
+            strip=True
+        )
+
+        if len(text) >= 30:
+
+            paragraphs.append(text)
+
+    return clean_text(
+        "\n\n".join(paragraphs)
+    )
+
+
+# ============================================================
+# KNOWN CONTENT CONTAINERS
+# ============================================================
+
+def extract_from_known_containers(
+    soup: BeautifulSoup
+) -> str:
+
+    selectors = [
+        "[itemprop='articleBody']",
+        ".article-body",
+        ".article-content",
+        ".article__content",
+        ".story-content",
+        ".story__content",
+        ".post-content",
+        ".entry-content",
+        ".article-detail",
+        ".article-details",
+        ".content-area",
+        ".articleBody",
+        "#article-body"
+    ]
+
+    for selector in selectors:
+
+        container = soup.select_one(
+            selector
+        )
+
+        if not container:
             continue
 
-        if text.startswith(
-            (
-                "Also Read",
-                "Click here",
-                "Subscribe",
-                "Explained |",
-                "Follow us on",
-                "Follow us",
-                "Read More",
-                "Advertisement",
-            )
+        for tag in container.find_all(
+            [
+                "script",
+                "style",
+                "noscript",
+                "nav",
+                "footer",
+                "header",
+                "aside",
+                "form"
+            ]
         ):
+
+            tag.decompose()
+
+        paragraphs = []
+
+        for p in container.find_all(
+            "p"
+        ):
+
+            text = p.get_text(
+                " ",
+                strip=True
+            )
+
+            if len(text) >= 30:
+
+                paragraphs.append(text)
+
+        result = clean_text(
+            "\n\n".join(paragraphs)
+        )
+
+        if len(result) >= MIN_ARTICLE_LENGTH:
+
+            return result
+
+    return ""
+
+
+# ============================================================
+# GENERIC PARAGRAPH EXTRACTION
+# ============================================================
+
+def extract_paragraphs(
+    soup: BeautifulSoup
+) -> str:
+
+    for tag in soup.find_all(
+        [
+            "script",
+            "style",
+            "noscript",
+            "svg",
+            "nav",
+            "footer",
+            "header",
+            "aside",
+            "form"
+        ]
+    ):
+
+        tag.decompose()
+
+    paragraphs = []
+
+    for p in soup.find_all("p"):
+
+        text = p.get_text(
+            " ",
+            strip=True
+        )
+
+        if len(text) < 40:
+            continue
+
+        # Ignore obvious navigation/social text
+
+        lowered = text.lower()
+
+        ignored_phrases = [
+            "subscribe",
+            "follow us",
+            "advertisement",
+            "sign up",
+            "newsletter",
+            "read more",
+            "share this article",
+            "cookie policy",
+            "privacy policy"
+        ]
+
+        if any(
+            phrase in lowered
+            for phrase in ignored_phrases
+        ):
+
             continue
 
         paragraphs.append(text)
 
-    if len(paragraphs) >= 2:
-        return "\n\n".join(paragraphs)
-
-    return ""
-
-
-def _indian_express_lite_url(url: str) -> str:
-    """
-    Convert:
-
-    https://indianexpress.com/article/india/example/
-
-    into:
-
-    https://indianexpress.com/article/india/example/lite/
-    """
-
-    parts = urlsplit(url)
-
-    path = parts.path.rstrip("/")
-
-    if not path.endswith("/lite"):
-        path += "/lite"
-
-    return urlunsplit(
-        (
-            parts.scheme,
-            parts.netloc,
-            path + "/",
-            parts.query,
-            parts.fragment,
-        )
+    return clean_text(
+        "\n\n".join(paragraphs)
     )
 
 
-def _extract_indian_express_page(
-    url: str,
-    label: str = "Indian Express"
+# ============================================================
+# TRafilatura EXTRACTION
+# ============================================================
+
+def extract_with_trafilatura(
+    html: str
 ) -> str:
 
-    print(f"Trying {label} extraction...")
-    print("URL:", url)
+    if not html:
+        return ""
 
     try:
+
+        result = trafilatura.extract(
+            html,
+            include_comments=False,
+            include_tables=False,
+            include_links=False,
+            include_images=False,
+            favor_precision=True
+        )
+
+        if result:
+
+            return clean_text(result)
+
+    except Exception:
+
+        pass
+
+    return ""
+
+
+# ============================================================
+# HTTP REQUEST
+# ============================================================
+
+def fetch_page(
+    url: str
+):
+
+    try:
+
         response = curl_requests.get(
             url,
-            impersonate="chrome120",
-            timeout=15,
+            timeout=REQUEST_TIMEOUT,
+            impersonate="chrome",
+            allow_redirects=True,
             headers={
-                "Referer": "https://www.google.com/",
                 "Accept": (
-                    "text/html,application/xhtml+xml,"
-                    "application/xml;q=0.9,image/avif,"
-                    "image/webp,*/*;q=0.8"
+                    "text/html,"
+                    "application/xhtml+xml,"
+                    "application/xml;q=0.9,"
+                    "image/avif,"
+                    "image/webp,"
+                    "*/*;q=0.8"
                 ),
-                "Accept-Language": "en-US,en;q=0.9",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
+                "Accept-Language": (
+                    "en-US,en;q=0.9"
                 ),
-            },
+                "Cache-Control": "no-cache"
+            }
         )
 
-        print(f"{label} page status:", response.status_code)
-
-        if response.status_code != 200:
-            return ""
-
-        html = response.text
-
-        if not html:
-            return ""
-
-        if _is_error_payload(html):
-            print(f"{label} returned an error page.")
-            return ""
-
-        soup = BeautifulSoup(
-            html,
-            "html.parser"
-        )
-
-        # 1. JSON-LD
-
-        json_ld = _extract_from_json_ld(soup)
-
-        if json_ld and not _is_error_payload(json_ld):
-            print(
-                f"{label} JSON-LD extraction successful."
-            )
-
-            return _clean_text(json_ld)
-
-        # 2. Known article containers
-
-        containers = soup.find_all(
-            "div",
-            class_=re.compile(
-                r"(story-details|full-details|ie-content|"
-                r"article-body|storycontent|story_details|"
-                r"art-content)",
-                re.IGNORECASE,
-            ),
-        )
-
-        for container in containers:
-
-            paragraphs = []
-
-            for p in container.find_all("p"):
-
-                text = p.get_text(
-                    " ",
-                    strip=True
-                )
-
-                if len(text) <= 35:
-                    continue
-
-                if text.startswith(
-                    (
-                        "Also Read",
-                        "Click here",
-                        "Subscribe",
-                        "Follow us",
-                        "Read More",
-                        "Advertisement",
-                    )
-                ):
-                    continue
-
-                paragraphs.append(text)
-
-            if paragraphs:
-
-                article_text = "\n\n".join(
-                    paragraphs
-                )
-
-                article_text = _clean_text(
-                    article_text
-                )
-
-                if not _is_error_payload(
-                    article_text
-                ):
-                    print(
-                        f"{label} HTML container "
-                        "extraction successful."
-                    )
-
-                    return article_text
-
-        # 3. <article> or <main>
-
-        container = soup.find("article")
-
-        if not container:
-            container = soup.find("main")
-
-        if container:
-
-            paragraphs = []
-
-            for p in container.find_all("p"):
-
-                text = p.get_text(
-                    " ",
-                    strip=True
-                )
-
-                if len(text) <= 35:
-                    continue
-
-                if text.startswith(
-                    (
-                        "Also Read",
-                        "Click here",
-                        "Subscribe",
-                        "Follow us",
-                        "Read More",
-                        "Advertisement",
-                    )
-                ):
-                    continue
-
-                paragraphs.append(text)
-
-            if paragraphs:
-
-                article_text = "\n\n".join(
-                    paragraphs
-                )
-
-                article_text = _clean_text(
-                    article_text
-                )
-
-                if not _is_error_payload(
-                    article_text
-                ):
-                    print(
-                        f"{label} article/main "
-                        "extraction successful."
-                    )
-
-                    return article_text
-
-        # 4. General paragraph extraction
-
-        dom = _extract_soup_paragraphs(soup)
-
-        if dom and not _is_error_payload(dom):
-
-            print(
-                f"{label} general paragraph "
-                "extraction successful."
-            )
-
-            return _clean_text(dom)
+        return response
 
     except Exception as e:
 
         print(
-            f"{label} extraction error:",
-            e
+            f"Request error: {e}"
         )
 
-    return ""
+        return None
 
 
-def _fetch_indian_express_direct(url: str) -> str:
+# ============================================================
+# INDIAN EXPRESS
+# ============================================================
 
-    print("Indian Express detected.")
-
-    # Attempt 1: Normal article
-
-    article_text = _extract_indian_express_page(
-        url,
-        "Indian Express direct"
-    )
-
-    if article_text:
-        return article_text
+def extract_indian_express(
+    url: str
+) -> str:
 
     print(
-        "Indian Express direct extraction failed."
+        "Indian Express detected."
     )
 
-    # Attempt 2: /lite/ version
+    print(
+        "Trying Indian Express direct extraction..."
+    )
 
-    lite_url = _indian_express_lite_url(url)
+    response = fetch_page(url)
 
-    if lite_url != url:
+    if response is None:
 
         print(
-            "Trying Indian Express /lite/ fallback..."
+            "Indian Express request failed."
         )
 
-        article_text = _extract_indian_express_page(
-            lite_url,
-            "Indian Express /lite/"
-        )
-
-        if article_text:
-
-            print(
-                "Indian Express /lite/ "
-                "extraction successful."
-            )
-
-            return article_text
+        return ""
 
     print(
-        "Indian Express /lite/ extraction failed."
+        f"Indian Express page status: "
+        f"{response.status_code}"
+    )
+
+    # --------------------------------------------------------
+    # IMPORTANT
+    # --------------------------------------------------------
+    # Do not attempt to bypass a 403 response.
+    #
+    # Indian Express may intentionally block automated
+    # requests from cloud/server IP addresses.
+    # --------------------------------------------------------
+
+    if response.status_code == 403:
+
+        print(
+            "Indian Express returned HTTP 403."
+        )
+
+        print(
+            "Automated extraction is blocked."
+        )
+
+        return ""
+
+    if response.status_code != 200:
+
+        print(
+            "Indian Express request failed."
+        )
+
+        return ""
+
+    html = response.text
+
+    if not html:
+
+        return ""
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+    # --------------------------------------------------------
+    # JSON-LD
+    # --------------------------------------------------------
+
+    result = extract_json_ld(
+        soup
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        print(
+            "Indian Express JSON-LD extraction successful."
+        )
+
+        return result
+
+    # --------------------------------------------------------
+    # Article tag
+    # --------------------------------------------------------
+
+    result = extract_from_article_tag(
+        soup
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        print(
+            "Indian Express article extraction successful."
+        )
+
+        return result
+
+    # --------------------------------------------------------
+    # Known containers
+    # --------------------------------------------------------
+
+    result = extract_from_known_containers(
+        soup
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        print(
+            "Indian Express container extraction successful."
+        )
+
+        return result
+
+    # --------------------------------------------------------
+    # Main
+    # --------------------------------------------------------
+
+    result = extract_from_main(
+        soup
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        print(
+            "Indian Express main extraction successful."
+        )
+
+        return result
+
+    # --------------------------------------------------------
+    # Generic paragraphs
+    # --------------------------------------------------------
+
+    result = extract_paragraphs(
+        soup
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        print(
+            "Indian Express paragraph extraction successful."
+        )
+
+        return result
+
+    # --------------------------------------------------------
+    # Trafilatura
+    # --------------------------------------------------------
+
+    result = extract_with_trafilatura(
+        html
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        print(
+            "Indian Express Trafilatura extraction successful."
+        )
+
+        return result
+
+    print(
+        "Indian Express extraction failed."
     )
 
     return ""
 
 
-def extract_article(url: str) -> str:
+# ============================================================
+# GENERIC ARTICLE EXTRACTION
+# ============================================================
 
-    clean_url = url.strip()
+def extract_generic_article(
+    url: str
+) -> str:
 
-    # INDIAN EXPRESS
+    print(
+        "Trying generic article extraction..."
+    )
 
-    if "indianexpress.com" in clean_url.lower():
+    response = fetch_page(url)
 
-        ie_text = _fetch_indian_express_direct(
-            clean_url
-        )
-
-        if ie_text:
-            return ie_text
+    if response is None:
 
         print(
-            "Indian Express extraction "
-            "completely failed."
+            "Website request failed."
         )
 
-    # STANDARD WEBSITE EXTRACTION
+        return ""
 
-    try:
+    print(
+        f"Website status: "
+        f"{response.status_code}"
+    )
 
-        response = curl_requests.get(
-            clean_url,
-            impersonate="chrome120",
-            timeout=10,
-            headers={
-                "Referer": "https://www.google.com/",
-                "Accept-Language": "en-US,en;q=0.9",
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-            },
+    if response.status_code == 403:
+
+        print(
+            "Website returned HTTP 403."
         )
 
         print(
-            "Website status:",
-            response.status_code
+            "Automated extraction is blocked."
         )
 
-        if response.status_code == 200:
+        return ""
 
-            soup = BeautifulSoup(
-                response.text,
-                "html.parser"
-            )
+    if response.status_code != 200:
 
-            # JSON-LD
+        return ""
 
-            json_ld = _extract_from_json_ld(
-                soup
-            )
+    html = response.text
 
-            if (
-                json_ld
-                and not _is_error_payload(json_ld)
-            ):
+    if not html:
 
-                print(
-                    "JSON-LD extraction successful."
-                )
+        return ""
 
-                return _clean_text(
-                    json_ld
-                )
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
 
-            # Trafilatura
+    # --------------------------------------------------------
+    # JSON-LD
+    # --------------------------------------------------------
 
-            traf = trafilatura.extract(
-                response.text,
-                no_fallback=False
-            )
+    result = extract_json_ld(
+        soup
+    )
 
-            if (
-                traf
-                and not _is_error_payload(traf)
-            ):
+    if len(result) >= MIN_ARTICLE_LENGTH:
 
-                print(
-                    "Trafilatura extraction successful."
-                )
+        return result
 
-                return _clean_text(traf)
+    # --------------------------------------------------------
+    # Article tag
+    # --------------------------------------------------------
 
-            # BeautifulSoup
+    result = extract_from_article_tag(
+        soup
+    )
 
-            dom = _extract_soup_paragraphs(
-                soup
-            )
+    if len(result) >= MIN_ARTICLE_LENGTH:
 
-            if (
-                dom
-                and not _is_error_payload(dom)
-            ):
+        return result
 
-                print(
-                    "BeautifulSoup extraction successful."
-                )
+    # --------------------------------------------------------
+    # Known containers
+    # --------------------------------------------------------
 
-                return _clean_text(dom)
+    result = extract_from_known_containers(
+        soup
+    )
 
-    except Exception as e:
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        return result
+
+    # --------------------------------------------------------
+    # Main
+    # --------------------------------------------------------
+
+    result = extract_from_main(
+        soup
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        return result
+
+    # --------------------------------------------------------
+    # Trafilatura
+    # --------------------------------------------------------
+
+    result = extract_with_trafilatura(
+        html
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        return result
+
+    # --------------------------------------------------------
+    # Generic paragraphs
+    # --------------------------------------------------------
+
+    result = extract_paragraphs(
+        soup
+    )
+
+    if len(result) >= MIN_ARTICLE_LENGTH:
+
+        return result
+
+    return ""
+
+
+# ============================================================
+# PUBLIC FUNCTION
+# ============================================================
+
+def extract_article(
+    url: str
+) -> str:
+
+    """
+    Extract article text from a news URL.
+
+    Returns:
+        str: Extracted article text.
+        Empty string if extraction fails.
+    """
+
+    if not url:
+
+        return ""
+
+    url = clean_url(url)
+
+    if not url.startswith(
+        ("http://", "https://")
+    ):
+
+        return ""
+
+    domain = get_domain(url)
+
+    print(
+        f"URL: {url}"
+    )
+
+    # --------------------------------------------------------
+    # Indian Express
+    # --------------------------------------------------------
+
+    if (
+        domain == "indianexpress.com"
+        or domain.endswith(
+            ".indianexpress.com"
+        )
+    ):
+
+        result = extract_indian_express(
+            url
+        )
+
+        if result:
+
+            return result
 
         print(
-            "Standard extraction error:",
-            e
+            "Indian Express extraction completely failed."
         )
 
-    # TRAFILATURA FALLBACK
+        return ""
 
-    try:
+    # --------------------------------------------------------
+    # Generic websites
+    # --------------------------------------------------------
 
-        print(
-            "Trying Trafilatura fetch fallback..."
-        )
+    result = extract_generic_article(
+        url
+    )
 
-        html = trafilatura.fetch_url(
-            clean_url
-        )
+    if result:
 
-        if html:
+        return result
 
-            traf = trafilatura.extract(
-                html,
-                no_fallback=False
-            )
-
-            if (
-                traf
-                and not _is_error_payload(traf)
-            ):
-
-                print(
-                    "Trafilatura fallback "
-                    "successful."
-                )
-
-                return _clean_text(traf)
-
-    except Exception as e:
-
-        print(
-            "Trafilatura fallback error:",
-            e
-        )
+    print(
+        "Generic article extraction failed."
+    )
 
     return ""
